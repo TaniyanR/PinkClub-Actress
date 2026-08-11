@@ -1,0 +1,17 @@
+ErrorDocument 404 /404.php
+RewriteEngine On
+RewriteCond %{HTTP_HOST} ^www\.pinkclub-fanza\.com$ [NC]
+RewriteRule ^ https://pinkclub-fanza.com%{REQUEST_URI} [R=301,L,NE]
+RewriteCond %{HTTPS} !=on
+RewriteRule ^(?:index\.(?:php|com))?$ https://%{HTTP_HOST}/ [R=301,L]
+RewriteRule ^index\.(?:php|com)$ / [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+public/(item|items|actress|actresses|genre|genres|maker|makers|series_detail|series_list|label|labels|author|authors|posts|search)\.php(?:[?\s]) [NC]
+RewriteRule ^public/(item|items|actress|actresses|genre|genres|maker|makers|series_detail|series_list|label|labels|author|authors|posts|search)\.php$ /$1.php [R=301,L,NE]
+RewriteCond %{THE_REQUEST} \s/+(?:public/)?series_one\.php(?:[?\s]) [NC]
+RewriteRule ^(?:public/)?series_one\.php$ /series_detail.php [R=301,L,NE]
+RewriteRule ^(config(?:\.local)?\.php|cache|logs|config|lib|sql)(/|$) - [F,L]
+RewriteRule ^public/ - [L]
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule ^(.*)$ public/$1 [L]
