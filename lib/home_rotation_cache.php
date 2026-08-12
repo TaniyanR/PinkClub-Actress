@@ -8,6 +8,16 @@ function pcf_home_rotation_cache_file(): string
     return dirname(__DIR__) . '/storage/cache/home-rotation.json';
 }
 
+function pcf_home_rotation_read(): array
+{
+    $file = pcf_home_rotation_cache_file();
+    if (!is_file($file)) {
+        return [];
+    }
+    $decoded = json_decode((string)@file_get_contents($file), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
 function pcf_home_rotation_query(PDO $pdo, string $sql): array
 {
     try {
@@ -64,6 +74,19 @@ function pcf_home_rotation_window_sets(PDO $pdo, string $columns, string $table,
 
 function pcf_home_rotation_refresh(?PDO $pdo = null): array
 {
+    $directory = dirname(pcf_home_rotation_cache_file());
+    if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
+        return pcf_home_rotation_read();
+    }
+    $lockHandle = @fopen($directory . '/home-rotation.lock', 'c');
+    if (!is_resource($lockHandle) || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return pcf_home_rotation_read();
+    }
+
+    try {
     $pdo ??= db();
     $seed = (int)floor(time() / 600);
 
@@ -86,15 +109,15 @@ function pcf_home_rotation_refresh(?PDO $pdo = null): array
     $genres = pcf_home_rotation_query(
         $pdo,
         'SELECT g.id,g.name,COUNT(ig.id) AS item_count
-         FROM genres g INNER JOIN item_genres ig ON ig.genre_id=g.id
+         FROM genres g INNER JOIN item_genres ig ON ig.dmm_id=g.dmm_id
          GROUP BY g.id,g.name HAVING COUNT(ig.id)>0
          ORDER BY item_count DESC,g.id DESC LIMIT 120'
     );
-    if ($genres === []) {
+    if ($genres === [] && db_column_exists('item_genres', 'genre_id')) {
         $genres = pcf_home_rotation_query(
             $pdo,
             'SELECT g.id,g.name,COUNT(ig.id) AS item_count
-             FROM genres g INNER JOIN item_genres ig ON ig.dmm_id=g.dmm_id
+             FROM genres g INNER JOIN item_genres ig ON ig.genre_id=g.id
              GROUP BY g.id,g.name HAVING COUNT(ig.id)>0
              ORDER BY item_count DESC,g.id DESC LIMIT 120'
         );
@@ -107,10 +130,6 @@ function pcf_home_rotation_refresh(?PDO $pdo = null): array
         'genres' => pcf_home_rotation_pick_sets($genres, 3, $seed + 20),
     ];
 
-    $directory = dirname(pcf_home_rotation_cache_file());
-    if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
-        return [];
-    }
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (!is_string($json)) {
         return [];
@@ -122,6 +141,10 @@ function pcf_home_rotation_refresh(?PDO $pdo = null): array
     }
 
     return $payload;
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
 }
 
 function pcf_home_rotation_load(int $maxAgeSeconds = 900): array
@@ -134,8 +157,7 @@ function pcf_home_rotation_load(int $maxAgeSeconds = 900): array
             return [];
         }
     }
-    $decoded = json_decode((string)@file_get_contents($file), true);
-    return is_array($decoded) ? $decoded : [];
+    return pcf_home_rotation_read();
 }
 
 function pcf_home_rotation_current_set(array $cache, string $key): array

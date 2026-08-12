@@ -11,7 +11,7 @@ function scheduler_tick(): array
     scheduler_seed_default_schedules($pdo);
     scheduler_apply_auto_settings($pdo);
 
-    $stmt = $pdo->query("SELECT * FROM api_schedules WHERE is_enabled = 1 AND schedule_type IN ('items','actresses') ORDER BY FIELD(schedule_type, 'items','actresses')");
+    $stmt = $pdo->query("SELECT * FROM api_schedules WHERE is_enabled = 1 AND schedule_type IN ('items','actresses') ORDER BY COALESCE(last_run_at, '1970-01-01 00:00:00') ASC, FIELD(schedule_type, 'items','actresses')");
     $schedules = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
     $jobs = [];
     foreach ($schedules as $schedule) {
@@ -30,15 +30,14 @@ function scheduler_tick(): array
         try {
             $result = scheduler_run_schedule($schedule);
             $jobStatus = scheduler_schedule_result_status($result);
-            if ($jobStatus === 'success') {
-                $pdo->prepare('UPDATE api_schedules SET last_run_at = NOW(), lock_until = NULL WHERE id = ?')->execute([$schedule['id']]);
-            } else {
-                $pdo->prepare('UPDATE api_schedules SET lock_until = NULL WHERE id = ?')->execute([$schedule['id']]);
-            }
+            // Record every acquired execution attempt so one unhealthy job cannot starve the other.
+            $pdo->prepare('UPDATE api_schedules SET last_run_at = NOW(), lock_until = NULL WHERE id = ?')->execute([$schedule['id']]);
             $jobs[] = array_merge(['schedule_type' => $scheduleType, 'status' => $jobStatus], $result);
+            break;
         } catch (Throwable $e) {
-            $pdo->prepare('UPDATE api_schedules SET lock_until = NULL WHERE id = ?')->execute([$schedule['id']]);
+            $pdo->prepare('UPDATE api_schedules SET last_run_at = NOW(), lock_until = NULL WHERE id = ?')->execute([$schedule['id']]);
             $jobs[] = ['schedule_type' => $scheduleType, 'status' => 'error', 'synced_count' => 0, 'message' => $e->getMessage()];
+            break;
         }
     }
 
