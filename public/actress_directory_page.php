@@ -15,7 +15,18 @@ $directorySubtitle = $pcaDirectoryAmateur
     ? '気になるしろうと女性のプロフィールと出演作品へ。'
     : '気になる女優のプロフィールと出演作品へ。';
 
-$rows = pca_fetch_actresses($pcaDirectoryAmateur, 10000, 0, false);
+if ($pcaDirectoryAmateur) {
+    $rows = pca_fetch_actresses(true, 10000, 0, false);
+} else {
+    try {
+        $stmt = db()->query("SELECT a.* FROM actresses a WHERE TRIM(a.name) <> '' AND a.dmm_id REGEXP '^[0-9]+$' ORDER BY a.name ASC, a.id ASC");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    } catch (Throwable $e) {
+        error_log('actress directory fetch failed: ' . $e->getMessage());
+        $rows = [];
+    }
+}
+
 $groups = pca_group_actresses($rows);
 $order = ['あ','か','さ','た','な','は','ま','や','ら','わ','A-Z','#'];
 
@@ -62,7 +73,7 @@ require __DIR__ . '/partials/header.php';
     </section>
   <?php endforeach; ?>
 <?php else: ?>
-  <?php pcf_render_empty($directoryTitle . 'のデータがまだありません。女優情報APIを先に同期し、出演作品の分類用として商品APIを補助的に同期してください。'); ?>
+  <?php pcf_render_empty($directoryTitle . 'のデータがまだありません。女優情報APIを同期してください。'); ?>
 <?php endif; ?>
 
 <?php require __DIR__ . '/partials/footer.php'; ?>
