@@ -16,21 +16,30 @@ function pca_detail_profile_value(array $row, string $key): string
 
 /**
  * 女優個別ページ用の商品取得。
- * まず item_actresses の女優ID/女優名で取得し、過去データで関連テーブルが不足している場合は
- * raw_json 内の女優ID/女優名もフォールバック検索する。
+ * 既存PinkClub-FANZAと同じrepository経路を最優先し、
+ * DMM ID/女優名の関係テーブル、最後にraw_jsonをフォールバックする。
  */
-function pca_detail_items(string $dmmId, string $name, int $limit, int $offset): array
+function pca_detail_items(int $actressId, string $dmmId, string $name, int $limit, int $offset): array
 {
     $limit = max(1, min(100, $limit));
     $offset = max(0, $offset);
-    $pdo = db();
 
+    try {
+        $rows = fetch_items_by_actress($actressId, $limit, $offset);
+        if ($rows !== []) {
+            return $rows;
+        }
+    } catch (Throwable $e) {
+        error_log('repository actress item fetch failed: ' . $e->getMessage());
+    }
+
+    $pdo = db();
     try {
         $stmt = $pdo->prepare(
             "SELECT DISTINCT i.*
              FROM items i
              INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE ia.dmm_id = :dmm_id OR ia.actress_name = :name
+             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
              ORDER BY i.release_date DESC, i.id DESC
              LIMIT {$limit} OFFSET {$offset}"
         );
@@ -43,7 +52,6 @@ function pca_detail_items(string $dmmId, string $name, int $limit, int $offset):
         error_log('actress relation item fetch failed: ' . $e->getMessage());
     }
 
-    // PR適用前に保存された商品にも対応する。
     try {
         $stmt = $pdo->prepare(
             "SELECT i.* FROM items i
@@ -73,7 +81,6 @@ try {
     error_log('actress fetch failed: ' . $e->getMessage());
     $row = null;
 }
-
 if (!is_array($row)) {
     require __DIR__ . '/404.php';
 }
@@ -90,6 +97,20 @@ try {
     error_log('actress page view logging failed: ' . $e->getMessage());
 }
 
+$profile = [
+    'name' => $name,
+    'ruby' => (string)($row['ruby'] ?? ''),
+    'birthday' => (string)($row['birthday'] ?? ''),
+    'prefectures' => (string)($row['prefectures'] ?? ''),
+    'hobby' => '',
+    'bust' => '',
+    'cup' => '',
+    'waist' => '',
+    'hip' => '',
+    'height' => '',
+    'blood_type' => '',
+];
+
 $profileImage = pca_actress_image($row);
 if ($profileImage === '') {
     $profileImage = pcf_placeholder_data_uri('No Photo');
@@ -98,27 +119,20 @@ if ($profileImage === '') {
 $page = max(1, (int)get('page', 1));
 $limit = 24;
 $offset = ($page - 1) * $limit;
-$loaded = pca_detail_items($dmmId, $name, $limit + 1, $offset);
+$loaded = pca_detail_items($id, $dmmId, $name, $limit + 1, $offset);
 $loaded = dedupe_items_by_key($loaded);
 [$items, $hasNext] = paginate_items($loaded, $limit);
 
 $rankPeriod = trim((string)get('rank_period', 'daily'));
-$rankTabs = [
-    'daily' => '本日',
-    'weekly' => '週間',
-    'monthly' => '月間',
-    'yearly' => '年間',
-];
+$rankTabs = ['daily' => '本日', 'weekly' => '週間', 'monthly' => '月間', 'yearly' => '年間'];
 if (!isset($rankTabs[$rankPeriod])) {
     $rankPeriod = 'daily';
 }
-
 try {
     $ranking = pcf_public_weighted_ranking('actresses', $rankPeriod);
 } catch (Throwable $e) {
     $ranking = [];
 }
-
 $ranking = array_values(array_filter($ranking, static function ($candidate): bool {
     return is_array($candidate)
         && (int)($candidate['id'] ?? 0) > 0
@@ -140,27 +154,56 @@ require __DIR__ . '/partials/header.php';
 ]); ?>
 
 <style>
-.pca-profile{display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:24px;align-items:start}.pca-profile__image{width:100%;max-width:320px;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f2f4f7}.pca-profile h1{margin:0 0 16px;padding:0 0 8px 10px;border-left:8px solid #002bff;border-bottom:2px solid #002bff}.pca-profile dl{margin:0;display:grid;grid-template-columns:140px 1fr}.pca-profile dt,.pca-profile dd{margin:0;padding:10px;border-bottom:1px solid #e4e7ec}.pca-profile dt{font-weight:700;background:#f8fafc}.pca-rank-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.pca-rank-tabs a{display:inline-block;padding:7px 12px;border:1px solid #0b5ed7;border-radius:6px;text-decoration:none}.pca-rank-tabs a.is-active{background:#0b5ed7;color:#fff}.pca-ranking{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.pca-ranking a{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #e4e7ec;border-radius:7px;text-decoration:none;color:inherit}.pca-ranking img{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#f2f4f7}@media(max-width:720px){.pca-profile{grid-template-columns:1fr}.pca-profile__image{max-width:100%}.pca-profile dl{grid-template-columns:110px 1fr}.pca-ranking{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pca-profile{display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:20px;align-items:start}.pca-profile__image{width:100%;max-width:320px;aspect-ratio:1/1;object-fit:cover;border-radius:6px;background:#f2f4f7}.pca-profile h1{margin:0 0 16px;padding:0 0 6px 8px;border-left:8px solid #002bff;border-bottom:2px solid #002bff}.pca-profile__details{display:grid;grid-template-columns:1fr 1fr;gap:24px}.pca-detail-list{margin:0}.pca-detail-list div{display:grid;grid-template-columns:100px 1fr;border-bottom:1px solid #e4e7ec}.pca-detail-list dt,.pca-detail-list dd{margin:0;padding:10px}.pca-detail-list dt{font-weight:700;background:#f8fafc}.pca-rank-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.pca-rank-tabs a{display:inline-block;padding:7px 12px;border:1px solid #0b5ed7;border-radius:6px;text-decoration:none}.pca-rank-tabs a.is-active{background:#0b5ed7;color:#fff}.pca-ranking{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.pca-ranking a{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #e4e7ec;border-radius:7px;text-decoration:none;color:inherit}.pca-ranking img{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#f2f4f7}@media(max-width:720px){.pca-profile{grid-template-columns:1fr}.pca-profile__image{max-width:100%}.pca-profile__details{grid-template-columns:1fr;gap:0}.pca-ranking{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 
 <section class="pca-profile">
-  <img class="pca-profile__image" src="<?= e($profileImage) ?>" alt="<?= e($name) ?>" decoding="async" fetchpriority="high">
+  <img id="actress-profile-image" class="pca-profile__image" src="<?= e($profileImage) ?>" alt="<?= e($name) ?>" decoding="async" fetchpriority="high">
   <div>
     <h1><?= e($name) ?></h1>
-    <dl>
-      <dt>よみ</dt><dd><?= e(pca_detail_profile_value($row, 'ruby')) ?></dd>
-      <dt>誕生日</dt><dd><?= e(pca_detail_profile_value($row, 'birthday')) ?></dd>
-      <dt>出身地</dt><dd><?= e(pca_detail_profile_value($row, 'prefectures')) ?></dd>
-    </dl>
+    <div class="pca-profile__details">
+      <dl class="pca-detail-list">
+        <div><dt>よみ</dt><dd data-actress-profile="ruby"><?= e(pca_detail_profile_value($profile, 'ruby')) ?></dd></div>
+        <div><dt>誕生日</dt><dd data-actress-profile="birthday"><?= e(pca_detail_profile_value($profile, 'birthday')) ?></dd></div>
+        <div><dt>出身地</dt><dd data-actress-profile="prefectures"><?= e(pca_detail_profile_value($profile, 'prefectures')) ?></dd></div>
+        <div><dt>趣味</dt><dd data-actress-profile="hobby"><?= e(pca_detail_profile_value($profile, 'hobby')) ?></dd></div>
+      </dl>
+      <dl class="pca-detail-list">
+        <div><dt>バスト</dt><dd data-actress-profile="bust"><?= e(pca_detail_profile_value($profile, 'bust')) ?></dd></div>
+        <div><dt>カップ</dt><dd data-actress-profile="cup"><?= e(pca_detail_profile_value($profile, 'cup')) ?></dd></div>
+        <div><dt>ウエスト</dt><dd data-actress-profile="waist"><?= e(pca_detail_profile_value($profile, 'waist')) ?></dd></div>
+        <div><dt>ヒップ</dt><dd data-actress-profile="hip"><?= e(pca_detail_profile_value($profile, 'hip')) ?></dd></div>
+        <div><dt>身長</dt><dd data-actress-profile="height"><?= e(pca_detail_profile_value($profile, 'height')) ?></dd></div>
+        <div><dt>血液型</dt><dd data-actress-profile="blood_type"><?= e(pca_detail_profile_value($profile, 'blood_type')) ?></dd></div>
+      </dl>
+    </div>
   </div>
 </section>
 
-<h2 class="pcf-section-title" style="margin-top:24px;"><?= e($name) ?>の作品</h2>
+<script>
+(() => {
+  const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+  fetch(endpoint, {credentials:'same-origin', headers:{'Accept':'application/json'}})
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => {
+      if (!data || !data.success || !data.display) return;
+      document.querySelectorAll('[data-actress-profile]').forEach((node) => {
+        const key = node.getAttribute('data-actress-profile');
+        if (key && Object.prototype.hasOwnProperty.call(data.display, key)) {
+          node.textContent = String(data.display[key] || '未登録');
+        }
+      });
+      const image = document.getElementById('actress-profile-image');
+      if (image && data.image_url) image.src = String(data.image_url);
+    })
+    .catch(() => {});
+})();
+</script>
+
+<h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>
   <section class="pcf-related-grid pcf-item-related-grid pcf-actress-related-grid">
-    <?php foreach ($items as $item): ?>
-      <?php pcf_render_item_card(is_array($item) ? $item : []); ?>
-    <?php endforeach; ?>
+    <?php foreach ($items as $item): pcf_render_item_card(is_array($item) ? $item : []); endforeach; ?>
   </section>
   <nav class="pcf-pagination" aria-label="ページネーション">
     <?php if ($page > 1): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page - 1))) ?>">前へ</a><?php endif; ?>
@@ -171,7 +214,7 @@ require __DIR__ . '/partials/header.php';
   <?php pcf_render_empty('この女優の作品はまだ同期されていません。cronまたは「今すぐ1回実行」で順番に取得されます。'); ?>
 <?php endif; ?>
 
-<section id="access-ranking" class="block" style="margin-top:28px;">
+<section id="access-ranking" class="block" style="margin-top:24px;">
   <h2 class="section-title">人気の女優ランキング！</h2>
   <div class="pca-rank-tabs">
     <?php foreach ($rankTabs as $key => $label): ?>
