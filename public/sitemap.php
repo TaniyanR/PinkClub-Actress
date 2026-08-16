@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/bootstrap.php';
@@ -23,146 +24,60 @@ function sitemap_url(string $loc, string $changefreq, string $priority, string $
     echo "  </url>\n";
 }
 
-function sitemap_product_where(string $alias): string
+function sitemap_actress_where(): string
 {
-    return items_product_source_where($alias);
+    return "TRIM(COALESCE(entity.name, '')) <> ''"
+        . " AND entity.dmm_id REGEXP '^[0-9]+$'"
+        . " AND LOWER(entity.name) NOT LIKE '%http://%'"
+        . " AND LOWER(entity.name) NOT LIKE '%https://%'"
+        . " AND LOWER(entity.name) NOT LIKE '%www.%'"
+        . " AND entity.name NOT LIKE '%/%'"
+        . ' AND EXISTS ('
+        . 'SELECT 1 FROM item_actresses relation_row '
+        . 'INNER JOIN items related_item ON related_item.id = relation_row.item_id '
+        . 'WHERE relation_row.dmm_id = entity.dmm_id '
+        . 'AND ' . items_product_source_where('related_item')
+        . ')';
 }
 
-/**
- * Only expose URLs that their detail handlers can render as indexable pages.
- * Master tables contain historical/orphan rows, so listing every row creates
- * sitemap URLs which immediately return 404.
- *
- * @return array<int,array{from:string,path:string,changefreq:string,priority:string,where:string}>
- */
-function sitemap_sources(): array
-{
-    $sources = [];
-
-    if (db_table_exists('items')) {
-        $sources[] = [
-            'from' => 'items entity',
-            'path' => 'item.php',
-            'changefreq' => 'weekly',
-            'priority' => '0.8',
-            'where' => sitemap_product_where('entity'),
-        ];
-    }
-
-    $masterSources = [
-        'genres' => ['relation' => 'item_genres', 'path' => 'genre.php'],
-        'series_master' => ['relation' => 'item_series', 'path' => 'series_detail.php'],
-        'actresses' => ['relation' => 'item_actresses', 'path' => 'actress.php'],
-        'makers' => ['relation' => 'item_makers', 'path' => 'maker.php'],
-    ];
-
-    foreach ($masterSources as $table => $config) {
-        $relation = (string)$config['relation'];
-        if (!db_table_exists($table) || !db_table_exists($relation)) {
-            continue;
-        }
-
-        $where = [
-            "TRIM(COALESCE(entity.name, '')) <> ''",
-            "LOWER(entity.name) NOT LIKE '%http://%'",
-            "LOWER(entity.name) NOT LIKE '%https://%'",
-            "LOWER(entity.name) NOT LIKE '%www.%'",
-            "entity.name NOT LIKE '%/%'",
-        ];
-
-        if ($table === 'actresses') {
-            $where[] = "entity.dmm_id REGEXP '^[0-9]+$'";
-        }
-        if ($table === 'series_master') {
-            $redirectSeriesIds = array_keys(series_canonical_maker_redirects());
-            if ($redirectSeriesIds !== []) {
-                $where[] = 'entity.id NOT IN (' . implode(',', array_map('intval', $redirectSeriesIds)) . ')';
-            }
-        }
-        if ($table === 'makers' && db_table_exists('mutual_links')) {
-            $where[] = 'NOT EXISTS (SELECT 1 FROM mutual_links ml WHERE ml.site_name = entity.name)';
-        }
-
-        if (db_column_exists($relation, 'item_id')) {
-            $where[] = 'EXISTS ('
-                . 'SELECT 1 FROM ' . $relation . ' relation_row '
-                . 'INNER JOIN items related_item ON related_item.id = relation_row.item_id '
-                . 'WHERE relation_row.dmm_id = entity.dmm_id '
-                . 'AND ' . sitemap_product_where('related_item')
-                . ')';
-        } else {
-            $legacyIdColumn = match ($table) {
-                'genres' => 'genre_id',
-                'series_master' => 'series_id',
-                'actresses' => 'actress_id',
-                'makers' => 'maker_id',
-            };
-            $where[] = 'EXISTS ('
-                . 'SELECT 1 FROM ' . $relation . ' relation_row '
-                . 'INNER JOIN items related_item ON related_item.content_id = relation_row.content_id '
-                . 'WHERE relation_row.' . $legacyIdColumn . ' = entity.id '
-                . 'AND ' . sitemap_product_where('related_item')
-                . ')';
-        }
-
-        $sources[] = [
-            'from' => $table . ' entity',
-            'path' => (string)$config['path'],
-            'changefreq' => 'weekly',
-            'priority' => '0.7',
-            'where' => implode(' AND ', $where),
-        ];
-    }
-
-    return $sources;
-}
-
-/** @param array{from:string,where:string} $source */
-function sitemap_source_count(array $source): int
+function sitemap_actress_count(): int
 {
     try {
         return (int)db()->query(
-            'SELECT COUNT(*) FROM ' . $source['from'] . ' WHERE ' . $source['where']
+            'SELECT COUNT(*) FROM actresses entity WHERE ' . sitemap_actress_where()
         )->fetchColumn();
     } catch (Throwable $e) {
-        error_log('sitemap count failed: ' . $source['from'] . ': ' . $e->getMessage());
+        error_log('actress sitemap count failed: ' . $e->getMessage());
         return 0;
     }
 }
 
-/**
- * @param array{from:string,path:string,changefreq:string,priority:string,where:string} $source
- */
-function sitemap_emit_source(array $source, int $start, int &$remaining): int
+function sitemap_emit_actresses(int $start, int &$remaining): int
 {
-    $count = sitemap_source_count($source);
+    $count = sitemap_actress_count();
     if ($remaining <= 0 || $start >= $count) {
         return $count;
     }
 
     $limit = min($remaining, $count - $start);
     try {
-        $sql = 'SELECT entity.id FROM ' . $source['from']
-            . ' WHERE ' . $source['where']
-            . ' ORDER BY entity.id ASC LIMIT :limit OFFSET :offset';
-        $stmt = db()->prepare($sql);
+        $stmt = db()->prepare(
+            'SELECT entity.id FROM actresses entity WHERE ' . sitemap_actress_where()
+            . ' ORDER BY entity.id ASC LIMIT :limit OFFSET :offset'
+        );
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->bindValue(':offset', $start, PDO::PARAM_INT);
         $stmt->execute();
-        while ($row = $stmt->fetch()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $id = (int)($row['id'] ?? 0);
             if ($id <= 0) {
                 continue;
             }
-            sitemap_url(
-                public_url($source['path']) . '?id=' . rawurlencode((string)$id),
-                $source['changefreq'],
-                $source['priority']
-            );
+            sitemap_url(public_url('actress.php') . '?id=' . rawurlencode((string)$id), 'weekly', '0.8');
             $remaining--;
         }
     } catch (Throwable $e) {
-        error_log('sitemap rows failed: ' . $source['from'] . ': ' . $e->getMessage());
+        error_log('actress sitemap rows failed: ' . $e->getMessage());
     }
 
     return $count;
@@ -170,14 +85,12 @@ function sitemap_emit_source(array $source, int $start, int &$remaining): int
 
 $perSitemap = 10000;
 $staticUrls = [
-    [public_url('index.php'), 'daily', '1.0'],
-    [public_url('items.php'), 'daily', '0.9'],
+    [rtrim(BASE_URL, '/') . '/', 'daily', '1.0'],
+    [public_url('actresses.php'), 'daily', '0.9'],
+    [public_url('amateur_actresses.php'), 'daily', '0.9'],
 ];
-$sources = sitemap_sources();
-$totalUrls = count($staticUrls);
-foreach ($sources as $source) {
-    $totalUrls += sitemap_source_count($source);
-}
+$actressCount = sitemap_actress_count();
+$totalUrls = count($staticUrls) + $actressCount;
 
 if ((isset($_GET['index']) && (string)$_GET['index'] === '1') || ($totalUrls > $perSitemap && !isset($_GET['part']))) {
     echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
@@ -211,9 +124,8 @@ foreach ($staticUrls as $index => $url) {
 }
 $start = max(0, $start - count($staticUrls));
 
-foreach ($sources as $source) {
-    $count = sitemap_emit_source($source, $start, $remaining);
-    $start = max(0, $start - $count);
+if ($remaining > 0) {
+    sitemap_emit_actresses($start, $remaining);
 }
 
 echo "</urlset>\n";

@@ -20,7 +20,8 @@ $menuGroups = [
         ['label' => '相互リンク表示設定', 'file' => 'link_rss_display.php'],
     ]],
     ['label' => 'API設定', 'children' => [
-        ['label' => '商品情報API設定', 'file' => 'api_items.php'],
+        ['label' => '女優情報API設定', 'file' => 'api_actresses.php'],
+        ['label' => '商品情報API設定（補助）', 'file' => 'api_items.php'],
         ['label' => '自動設定', 'file' => 'api_auto.php'],
     ]],
     ['label' => 'アクセス解析', 'children' => [
