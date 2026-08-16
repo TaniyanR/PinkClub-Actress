@@ -5,7 +5,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../lib/db.php';
 require_once __DIR__ . '/../../lib/app_features.php';
 require_once __DIR__ . '/../../lib/contact_page_slug.php';
-require_once __DIR__ . '/../../lib/public_counts.php';
 require_once __DIR__ . '/_helpers.php';
 
 $sortMode = site_setting_get('link.sort_mode', 'registered');
@@ -14,7 +13,6 @@ $canRenderAd = function_exists('render_ad');
 
 $partnerLinks = [];
 $textRssSiteCount = null;
-$sitePostCount = null;
 $siteActressCount = null;
 $fixedPages = [];
 $defaultFixedPages = [
@@ -23,9 +21,12 @@ $defaultFixedPages = [
     ['slug' => CONTACT_PAGE_SLUG, 'title' => 'お問い合わせ', 'href' => public_url('page.php?slug=que')],
 ];
 
-$publicCounts = pcf_public_counts();
-$sitePostCount = $publicCounts['posts'];
-$siteActressCount = $publicCounts['actresses'];
+try {
+    $stmt = db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$'");
+    $siteActressCount = $stmt ? (int)$stmt->fetchColumn() : null;
+} catch (Throwable $e) {
+    $siteActressCount = null;
+}
 
 try {
     $stmt = db()->query("SELECT ps.id, ps.name, ps.url, COALESCE(ps.show_link, ps.is_enabled, 1) AS show_link FROM partner_sites ps WHERE COALESCE(ps.show_link, ps.is_enabled, 1) = 1 ORDER BY {$orderBy}");
@@ -83,7 +84,6 @@ if ($fixedPages === []) {
             <p class="sidebar-empty">固定ページ（未設定）</p>
         <?php else: ?>
             <ul class="sidebar-links sidebar-links--pages">
-                <?php if ($sitePostCount !== null): ?><li><a style="color:#000;">公開作品数：<strong><?= e(number_format($sitePostCount)) ?></strong></a></li><?php endif; ?>
                 <?php if ($siteActressCount !== null): ?><li><a style="color:#000;">公開女優数：<strong><?= e(number_format($siteActressCount)) ?></strong></a></li><?php endif; ?>
                 <?php foreach ($fixedPages as $page): ?>
                     <?php $pageHref = trim((string)($page['href'] ?? '')); ?>
