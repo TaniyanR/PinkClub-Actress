@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)post('action', 'save');
 
     try {
-        if (in_array($action, ['save', 'sync_actresses', 'sync_actress_items'], true)) {
+        if (in_array($action, ['save', 'sync_all', 'sync_actress_items'], true)) {
             $apiId = trim((string)post('api_id', $apiId));
             $affiliateId = trim((string)post('affiliate_id', $affiliateId));
             api_credential_set('items', $apiId, $affiliateId);
@@ -30,19 +30,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = 'APIID / アフィリエイトIDを保存しました。';
         }
 
-        if ($action === 'sync_actresses') {
+        if ($action === 'sync_all') {
             $before = (int)db()->query('SELECT COUNT(*) FROM actresses')->fetchColumn();
             $offset = max(1, (int)site_setting_get('actress_sync_test_offset', '1'));
             $processed = dmm_sync_service('actresses')->syncMaster('actress', null, $offset, 10);
             $after = (int)db()->query('SELECT COUNT(*) FROM actresses')->fetchColumn();
             $nextOffset = $offset + max(10, $processed);
             site_setting_set_many(['actress_sync_test_offset' => (string)$nextOffset]);
-            $message = '女優情報を取得しました。処理: ' . $processed . '件 / 保存済み女優: ' . $after . '人 / 新規: ' . max(0, $after - $before) . '人';
+
+            $items = pca_sync_items_for_saved_actresses(5, 10);
+            $message = '女優情報: ' . $processed . '件処理 / 保存済み女優: ' . $after . '人 / 新規女優: ' . max(0, $after - $before) . '人。 '
+                . (string)$items['message'] . ' 新規作品: ' . (int)$items['new_count'] . '件 / 保存済み作品: ' . (int)$items['total_items'] . '件';
         }
 
         if ($action === 'sync_actress_items') {
-            $result = pca_sync_items_for_next_saved_actress(10);
-            $message = (string)$result['message'] . ' 新規商品: ' . (int)$result['new_count'] . '件 / 保存済み商品: ' . (int)$result['total_items'] . '件';
+            $result = pca_sync_items_for_saved_actresses(5, 10);
+            $message = (string)$result['message'] . ' 新規作品: ' . (int)$result['new_count'] . '件 / 保存済み作品: ' . (int)$result['total_items'] . '件';
         }
 
         if ($action === 'delete_actress') {
@@ -62,9 +65,9 @@ $totalActresses = 0;
 $totalItems = 0;
 $savedRows = [];
 try {
-    $totalActresses = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE name <> '' AND dmm_id REGEXP '^[0-9]+$'")->fetchColumn();
+    $totalActresses = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$'")->fetchColumn();
     $totalItems = (int)db()->query('SELECT COUNT(*) FROM items')->fetchColumn();
-    $savedRows = db()->query("SELECT id, name, dmm_id, updated_at FROM actresses WHERE name <> '' AND dmm_id REGEXP '^[0-9]+$' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $savedRows = db()->query("SELECT id, name, dmm_id, updated_at FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable) {
 }
 
@@ -72,8 +75,8 @@ require __DIR__ . '/includes/header.php';
 ?>
 <section class="card">
   <h1>女優・作品 API設定</h1>
-  <p><strong>この1画面だけでAPI設定と取得を行います。</strong></p>
-  <p>まず女優情報を保存し、その後「保存済み女優の作品を取得」を実行します。商品APIはDBに保存された女優を基準に検索し、女優個別ページに表示する作品を補助データとして保存します。</p>
+  <p><strong>この1画面だけで女優と作品を取得します。</strong></p>
+  <p>「女優・作品を取得」を押すと、女優情報を10件取得したあと、DBに保存済みの女優5人分の出演作品を取得します。作品は女優個別ページへ表示するための補助データです。</p>
 
   <?php if ($message !== ''): ?>
     <div class="admin-notice <?= $messageType === 'success' ? 'admin-notice--success' : 'admin-notice--error' ?>"><p><?= e($message) ?></p></div>
@@ -85,8 +88,8 @@ require __DIR__ . '/includes/header.php';
     <div><label>アフィリエイトID<br><input type="text" name="affiliate_id" value="<?= e($affiliateId) ?>" style="width:100%"></label></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="submit" name="action" value="save">保存</button>
-      <button type="submit" name="action" value="sync_actresses" class="button-secondary">女優情報を10件取得して保存</button>
-      <button type="submit" name="action" value="sync_actress_items" class="button-secondary">保存済み女優の作品を取得</button>
+      <button type="submit" name="action" value="sync_all" class="button-secondary">女優・作品を取得</button>
+      <button type="submit" name="action" value="sync_actress_items" class="button-secondary">作品を追加取得（5人分）</button>
     </div>
   </form>
 
