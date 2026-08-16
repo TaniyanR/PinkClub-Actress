@@ -28,9 +28,8 @@ $allActresses = [];
 
 try {
     $sql = "SELECT a.* FROM actresses a
-            WHERE a.name <> ''
+            WHERE TRIM(a.name) <> ''
               AND a.dmm_id REGEXP '^[0-9]+$'
-              AND (COALESCE(a.image_large, '') <> '' OR COALESCE(a.image_small, '') <> '' OR COALESCE(a.image_url, '') <> '')
             ORDER BY a.id ASC";
     $allActresses = db()->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
@@ -79,9 +78,12 @@ if ($originalScriptName === null) {
       <?php
       $id = (int)($actress['id'] ?? 0);
       $name = trim((string)($actress['name'] ?? ''));
-      $image = pca_actress_image(is_array($actress) ? $actress : []);
-      if ($id <= 0 || $name === '' || $image === '') {
+      if ($id <= 0 || $name === '') {
           continue;
+      }
+      $image = pca_actress_image(is_array($actress) ? $actress : []);
+      if ($image === '') {
+          $image = pcf_placeholder_data_uri('No Photo');
       }
       ?>
       <article class="pca-card">
