@@ -16,24 +16,39 @@ function pca_detail_profile_value(array $row, string $key): string
 
 /**
  * 女優個別ページ用の商品取得。
- * item_actresses の実際の紐付けを最優先し、既存repository、raw_jsonの順にフォールバックする。
+ * 通常女優はDMM女優IDだけ、しろうと女性の合成IDは名前だけで紐付ける。
+ * 同名人物を混同しない。
  */
 function pca_detail_items(int $actressId, string $dmmId, string $name, int $limit, int $offset): array
 {
     $limit = max(1, min(100, $limit));
     $offset = max(0, $offset);
     $pdo = db();
+    $synthetic = pca_is_synthetic_amateur_id($dmmId);
 
     try {
-        $stmt = $pdo->prepare(
-            "SELECT DISTINCT i.*
-             FROM items i
-             INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT {$limit} OFFSET {$offset}"
-        );
-        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
+        if ($synthetic) {
+            $stmt = $pdo->prepare(
+                "SELECT DISTINCT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id = i.id
+                 WHERE ia.actress_name = :name
+                   AND " . pca_amateur_item_sql('i') . "
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+            $stmt->execute([':name' => $name]);
+        } else {
+            $stmt = $pdo->prepare(
+                "SELECT DISTINCT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id = i.id
+                 WHERE ia.dmm_id = :dmm_id
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+            $stmt->execute([':dmm_id' => $dmmId]);
+        }
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         if ($rows !== []) {
             return $rows;
@@ -42,48 +57,40 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
         error_log('actress direct relation item fetch failed: ' . $e->getMessage());
     }
 
-    try {
-        $rows = fetch_items_by_actress($actressId, $limit, $offset);
-        if ($rows !== []) {
-            return $rows;
+    if (!$synthetic) {
+        try {
+            $rows = fetch_items_by_actress($actressId, $limit, $offset);
+            if ($rows !== []) {
+                return $rows;
+            }
+        } catch (Throwable $e) {
+            error_log('repository actress item fetch failed: ' . $e->getMessage());
         }
-    } catch (Throwable $e) {
-        error_log('repository actress item fetch failed: ' . $e->getMessage());
     }
 
     try {
-        $stmt = $pdo->prepare(
-            "SELECT i.* FROM items i
-             WHERE i.raw_json LIKE :dmm_like OR i.raw_json LIKE :name_like
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT {$limit} OFFSET {$offset}"
-        );
-        $stmt->execute([
-            ':dmm_like' => '%' . $dmmId . '%',
-            ':name_like' => '%' . $name . '%',
-        ]);
+        if ($synthetic) {
+            $stmt = $pdo->prepare(
+                "SELECT i.* FROM items i
+                 WHERE i.raw_json LIKE :name_like
+                   AND " . pca_amateur_item_sql('i') . "
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+            $stmt->execute([':name_like' => '%' . $name . '%']);
+        } else {
+            $stmt = $pdo->prepare(
+                "SELECT i.* FROM items i
+                 WHERE i.raw_json LIKE :dmm_like
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+            $stmt->execute([':dmm_like' => '%' . $dmmId . '%']);
+        }
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     } catch (Throwable $e) {
         error_log('actress raw item fetch failed: ' . $e->getMessage());
         return [];
-    }
-}
-
-function pca_detail_is_amateur(string $dmmId, string $name): bool
-{
-    try {
-        $stmt = db()->prepare(
-            "SELECT 1
-             FROM item_actresses ia
-             INNER JOIN items i ON i.id = ia.item_id
-             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
-               AND (i.floor_code = 'videoc' OR i.floor_name LIKE '%素人%' OR i.floor_name LIKE '%しろうと%' OR i.floor_name LIKE '%シロウト%')
-             LIMIT 1"
-        );
-        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
-        return (bool)$stmt->fetchColumn();
-    } catch (Throwable) {
-        return false;
     }
 }
 
@@ -135,9 +142,10 @@ $loaded = pca_detail_items($id, $dmmId, $name, $limit + 1, $offset);
 $loaded = dedupe_items_by_key($loaded);
 [$items, $hasNext] = paginate_items($loaded, $limit);
 
+$isAmateur = pca_identity_is_amateur($dmmId, $name);
 $profileImage = pca_actress_image($row);
-$isAmateur = pca_detail_is_amateur($dmmId, $name);
-if ($profileImage === '' && $items !== []) {
+// フルパッケージ画像を人物画像として代用するのは、しろうと女性だけ。
+if ($isAmateur && $profileImage === '' && $items !== []) {
     $profileImage = pcf_item_image($items[0]);
 }
 if ($profileImage === '') {
@@ -201,6 +209,7 @@ require __DIR__ . '/partials/header.php';
   </div>
 </section>
 
+<?php if (!$isAmateur): ?>
 <script>
 (() => {
   const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
@@ -220,6 +229,7 @@ require __DIR__ . '/partials/header.php';
     .catch(() => {});
 })();
 </script>
+<?php endif; ?>
 
 <h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>
