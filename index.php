@@ -38,7 +38,19 @@ try {
 }
 
 $seed = (int)sprintf('%u', crc32(gmdate('Y-m-d') . ':pinkclub-actress'));
-$allActresses = pca_seeded_shuffle($allActresses, $seed);
+$withImages = [];
+$withoutImages = [];
+foreach ($allActresses as $row) {
+    if (pca_actress_image(is_array($row) ? $row : []) !== '') {
+        $withImages[] = $row;
+    } else {
+        $withoutImages[] = $row;
+    }
+}
+$withImages = pca_seeded_shuffle($withImages, $seed);
+$withoutImages = pca_seeded_shuffle($withoutImages, $seed + 1);
+$allActresses = array_merge($withImages, $withoutImages);
+
 $total = count($allActresses);
 $pages = max(1, (int)ceil($total / $perPage));
 if ($page > $pages) {
