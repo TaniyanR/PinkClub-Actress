@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 function pcf_actress_directory_cache_dir(): string
 {
-    return dirname(__DIR__) . '/storage/cache/actress-directory-public-v3';
+    // v4: 通常女優としろうと女性をDMM ID単位で分離したキャッシュ。
+    return dirname(__DIR__) . '/storage/cache/actress-directory-public-v4';
 }
 
 function pcf_actress_directory_cache_manifest_path(): string
@@ -83,8 +84,30 @@ function pcf_actress_directory_cache_rebuild(bool $force = false): array
             }
         }
 
-        // PinkClub-Actress は女優が主役なので、商品との紐付け有無で一覧対象を減らさない。
-        $stmt = db()->query("SELECT id,dmm_id,name,ruby,image_small,image_large,image_url FROM actresses WHERE TRIM(COALESCE(name,'')) <> '' ORDER BY name ASC,id ASC LIMIT 10000");
+        // 通常女優一覧には、数値DMM女優IDを持つ人物だけを採用する。
+        // videocだけに存在する人物はしろうと女性側へ分離し、videoaがある人物は通常女優を優先する。
+        $stmt = db()->query(
+            "SELECT a.id,a.dmm_id,a.name,a.ruby,a.image_small,a.image_large,a.image_url
+             FROM actresses a
+             WHERE TRIM(COALESCE(a.name,'')) <> ''
+               AND a.dmm_id REGEXP '^[0-9]+$'
+               AND NOT (
+                 EXISTS (
+                   SELECT 1 FROM item_actresses ia_c
+                   INNER JOIN items i_c ON i_c.id = ia_c.item_id
+                   WHERE ia_c.dmm_id = a.dmm_id
+                     AND (i_c.floor_code='videoc' OR i_c.floor_name LIKE '%素人%' OR i_c.floor_name LIKE '%しろうと%' OR i_c.floor_name LIKE '%シロウト%')
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM item_actresses ia_a
+                   INNER JOIN items i_a ON i_a.id = ia_a.item_id
+                   WHERE ia_a.dmm_id = a.dmm_id
+                     AND i_a.floor_code='videoa'
+                 )
+               )
+             ORDER BY a.name ASC,a.id ASC
+             LIMIT 10000"
+        );
         $rows = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
         $groups = [];
         $seen = [];
