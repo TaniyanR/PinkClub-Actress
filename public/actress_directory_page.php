@@ -10,9 +10,9 @@ require_once __DIR__ . '/_bootstrap.php';
 require_once __DIR__ . '/../lib/actress_catalog.php';
 require_once __DIR__ . '/partials/public_ui.php';
 
-$directoryTitle = $pcaDirectoryAmateur ? 'しろうと女優一覧' : '女優一覧';
+$directoryTitle = $pcaDirectoryAmateur ? 'しろうと女性一覧' : '女優一覧';
 $directorySubtitle = $pcaDirectoryAmateur
-    ? '気になるしろうと女優のプロフィールと出演作品へ。'
+    ? '気になるしろうと女性のプロフィールと出演作品へ。'
     : '気になる女優のプロフィールと出演作品へ。';
 
 $rows = pca_fetch_actresses($pcaDirectoryAmateur, 10000, 0, false);
@@ -62,7 +62,7 @@ require __DIR__ . '/partials/header.php';
     </section>
   <?php endforeach; ?>
 <?php else: ?>
-  <?php pcf_render_empty($directoryTitle . 'のデータがまだありません。商品APIを同期すると出演作品から自動分類されます。'); ?>
+  <?php pcf_render_empty($directoryTitle . 'のデータがまだありません。女優情報APIを先に同期し、出演作品の分類用として商品APIを補助的に同期してください。'); ?>
 <?php endif; ?>
 
 <?php require __DIR__ . '/partials/footer.php'; ?>
