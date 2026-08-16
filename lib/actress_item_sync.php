@@ -44,32 +44,48 @@ function pca_enrich_missing_actress_images(int $limit = 100): array
 }
 
 /**
- * 保存済み女優のうち、まだ作品が1件も紐付いていない人を優先して取得する。
+ * 保存済み女優のうち、作品がまだ1件も紐付いていない人を最優先する。
+ * 未取得女優が残っている間はカーソルを使わず、必ず未取得の先頭を選ぶ。
+ * 全員に作品確認済みとなった後だけカーソル巡回に戻す。
  */
 function pca_sync_items_for_next_saved_actress(int $batch = 10): array
 {
     $batch = max(1, min(100, $batch));
     $pdo = db();
-    $rows = $pdo->query(
-        "SELECT a.id,a.dmm_id,a.name,
-                CASE WHEN EXISTS(SELECT 1 FROM item_actresses ia WHERE ia.dmm_id=a.dmm_id OR ia.actress_name=a.name) THEN 1 ELSE 0 END AS has_items
-         FROM actresses a
-         WHERE TRIM(COALESCE(a.name,''))<>'' AND a.dmm_id REGEXP '^[0-9]+$'
-         ORDER BY has_items ASC,a.id ASC"
-    )->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    if ($rows === []) throw new RuntimeException('保存済み女優がありません。');
 
-    $cursor = max(0, (int)site_setting_get('actress_item_sync_cursor', '0'));
-    if ($cursor >= count($rows)) $cursor = 0;
-    $actress = $rows[$cursor];
-    $nextCursor = ($cursor + 1) % count($rows);
+    $unsyncedStmt = $pdo->query(
+        "SELECT a.id,a.dmm_id,a.name
+         FROM actresses a
+         WHERE TRIM(COALESCE(a.name,''))<>''
+           AND a.dmm_id REGEXP '^[0-9]+$'
+           AND NOT EXISTS (
+             SELECT 1 FROM item_actresses ia
+             WHERE ia.dmm_id=a.dmm_id OR ia.actress_name=a.name
+           )
+         ORDER BY a.id ASC
+         LIMIT 1"
+    );
+    $actress = $unsyncedStmt ? $unsyncedStmt->fetch(PDO::FETCH_ASSOC) : false;
+
+    if (!$actress) {
+        $rows = $pdo->query(
+            "SELECT a.id,a.dmm_id,a.name
+             FROM actresses a
+             WHERE TRIM(COALESCE(a.name,''))<>'' AND a.dmm_id REGEXP '^[0-9]+$'
+             ORDER BY a.id ASC"
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows === []) throw new RuntimeException('保存済み女優がありません。');
+        $cursor = max(0, (int)site_setting_get('actress_item_sync_cursor', '0'));
+        if ($cursor >= count($rows)) $cursor = 0;
+        $actress = $rows[$cursor];
+        site_setting_set_many(['actress_item_sync_cursor'=>(string)(($cursor + 1) % count($rows))]);
+    }
+
     $actressId = (int)($actress['id'] ?? 0);
     $actressDmmId = trim((string)($actress['dmm_id'] ?? ''));
     $actressName = trim((string)($actress['name'] ?? ''));
     if ($actressId <= 0 || $actressDmmId === '' || $actressName === '') throw new RuntimeException('保存済み女優データが不正です。');
 
-    // 通常女優の作品はvideoaを対象にする。videocは別の発見処理で直接巡回する。
-    $target = ['site'=>'FANZA','service'=>'digital','floor'=>'videoa','label'=>'女優作品'];
     $offsetKey = 'actress_item_sync_offset.' . preg_replace('/[^a-z0-9_.-]+/i', '_', $actressDmmId . '.videoa');
     $offset = max(1, (int)site_setting_get($offsetKey, '1'));
     $beforeCount = (int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
@@ -87,10 +103,7 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
     }
 
     $count = (int)($result['api_count'] ?? $result['synced_count'] ?? 0);
-    site_setting_set_many([
-        $offsetKey=>(string)max(1,(int)($result['next_offset'] ?? 1)),
-        'actress_item_sync_cursor'=>(string)$nextCursor,
-    ]);
+    site_setting_set_many([$offsetKey=>(string)max(1,(int)($result['next_offset'] ?? 1))]);
     $afterCount = (int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
     return [
         'actress_id'=>$actressId,'actress_dmm_id'=>$actressDmmId,'actress_name'=>$actressName,
@@ -116,6 +129,8 @@ function pca_sync_items_for_saved_actresses(int $actressCount = 100, int $batchP
 
 /**
  * 女優APIに存在しないしろうと女性を発見するため、videocフロアを直接100作品ずつ巡回する。
+ * DmmNormalizer側で、videocにactress情報が無い場合はPinkClub-Shirotoと同じく作品タイトルを
+ * 女性名として補完するため、保存後のitem_actressesから人物マスタへ登録できる。
  */
 function pca_sync_amateur_floor_batch(int $batch = 100): array
 {
@@ -129,7 +144,6 @@ function pca_sync_amateur_floor_batch(int $batch = 100): array
     if ($apiCount < $batch) $nextOffset = 1;
     site_setting_set_many(['pca_amateur_floor_offset'=>(string)$nextOffset]);
 
-    // videoc作品の出演者を人物マスタへ登録する。dmm_idが無い場合は名前由来の安定IDを使う。
     try {
         $pdo->exec(
             "INSERT INTO actresses (dmm_id,name,created_at,updated_at)
