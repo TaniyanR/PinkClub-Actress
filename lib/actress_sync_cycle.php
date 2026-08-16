@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/app.php';
 require_once __DIR__ . '/actress_item_sync.php';
 require_once __DIR__ . '/actress_product_coverage.php';
+require_once __DIR__ . '/actress_product_direct.php';
 
 function pca_run_sync_cycle(): array
 {
@@ -22,14 +23,16 @@ function pca_run_sync_cycle(): array
     // 女優画像の個別API確認は外部通信が重いため10人ずつ。
     $images = pca_enrich_missing_actress_images(10);
 
-    // 既存商品は100件ずつだけ出演者関係を修復する。
-    $repair = pca_repair_item_actress_relations_batch(100);
-
-    // 通常女優は10人×最大10作品。外部商品APIは最大10回。
-    $normal = pca_sync_saved_actress_product_coverage(10, 10);
+    // 通常女優は10人×最大10作品。女優ID指定検索の結果は、
+    // 商品API側の出演者IDが異なっていても対象女優へ必ず紐付けて保存する。
+    $normal = pca_direct_sync_product_batch(10, 10);
 
     // しろうと女性はvideocを100作品ずつ取得する。
     $amateur = pca_sync_amateur_floor_batch(100);
+
+    // 以前の pca_repair_item_actress_relations_batch() は既存関係を一度全削除して
+    // raw_jsonだけから再構築していたため、女優ID指定検索で補完した正しい関係まで消していた。
+    // 商品同期そのものが関係を保存する現在は定期修復を実行しない。
 
     $totalItems = 0;
     try {
@@ -41,10 +44,9 @@ function pca_run_sync_cycle(): array
     $message = '女優 ' . $processedActresses . '件取得（新規 ' . $newActresses . '人） / '
         . '画像 ' . (int)($images['processed'] ?? 0) . '人確認・' . (int)($images['updated'] ?? 0) . '人補完 / '
         . '通常女優 ' . (int)($normal['processed_actresses'] ?? 0) . '人の商品確認'
-        . '（API ' . (int)($normal['api_count'] ?? 0) . '件 / 新規 ' . (int)($normal['new_items'] ?? 0) . '件 / 商品カード対象 '
+        . '（API ' . (int)($normal['api_count'] ?? 0) . '件 / 保存 ' . (int)($normal['saved_items'] ?? 0) . '件 / 新規 ' . (int)($normal['new_items'] ?? 0) . '件 / 同名既存関係 ' . (int)($normal['copied_relations'] ?? 0) . '件補完 / 商品カード対象 '
         . (int)($normal['coverage_before'] ?? 0) . '人→' . (int)($normal['coverage_after'] ?? 0) . '人） / '
-        . 'しろうと作品 ' . (int)($amateur['api_count'] ?? 0) . '件取得（登録しろうと女性 ' . (int)($amateur['amateur_count'] ?? 0) . '人） / '
-        . '既存作品の出演者関係 ' . (int)($repair['processed'] ?? 0) . '件修復';
+        . 'しろうと作品 ' . (int)($amateur['api_count'] ?? 0) . '件取得（登録しろうと女性 ' . (int)($amateur['amateur_count'] ?? 0) . '人）';
 
     site_setting_set_many([
         'pca_sync_last_run_at' => date('Y-m-d H:i:s'),
@@ -62,7 +64,7 @@ function pca_run_sync_cycle(): array
         'total_items' => $totalItems,
         'linked_actresses' => (int)($normal['coverage_after'] ?? 0),
         'amateur_count' => (int)($amateur['amateur_count'] ?? 0),
-        'relations_repaired' => (int)($repair['processed'] ?? 0),
+        'copied_relations' => (int)($normal['copied_relations'] ?? 0),
         'message' => $message,
     ];
 }
