@@ -9,9 +9,9 @@ require_once __DIR__ . '/actress_item_sync.php';
  * PinkClub-Actress の1回分の同期処理。
  * cron と管理画面の手動実行は必ずこの関数を共用する。
  *
- * 1. 女優マスタを取得
- * 2. 画像未取得女優を少数補完
- * 3. 保存済み女優を順番に処理し、その女優の作品だけを取得
+ * 1. 女優マスタを100件取得
+ * 2. 画像未取得女優を100人補完
+ * 3. 保存済み女優100人分の作品を取得
  *
  * @return array{actresses:int,images_processed:int,images_updated:int,processed_actresses:int,synced_items:int,new_items:int,total_items:int,message:string}
  */
@@ -31,12 +31,12 @@ function pca_run_sync_cycle(): array
     }
     site_setting_set_many(['pca_actress_sync_offset' => (string)$nextOffset]);
 
-    $images = pca_enrich_missing_actress_images(5);
-    $items = pca_sync_items_for_saved_actresses(5, 10);
+    $images = pca_enrich_missing_actress_images(100);
+    $items = pca_sync_items_for_saved_actresses(100, 10);
 
     $newActresses = max(0, $afterActresses - $beforeActresses);
     $message = '女優 ' . $processedActresses . '件取得（新規 ' . $newActresses . '人） / '
-        . '画像 ' . (int)($images['updated'] ?? 0) . '人補完 / '
+        . '画像 ' . (int)($images['processed'] ?? 0) . '人確認・' . (int)($images['updated'] ?? 0) . '人補完 / '
         . (int)($items['processed_actresses'] ?? 0) . '人分の作品を取得（新規作品 '
         . (int)($items['new_count'] ?? 0) . '件）';
 
