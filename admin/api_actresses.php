@@ -67,7 +67,7 @@ require __DIR__ . '/includes/header.php';
 <section class="card">
   <h1>女優・作品 API設定</h1>
   <p><strong>自動取得と手動取得は同じ処理です。</strong></p>
-  <p>cronの1回分は「女優取得 → 画像補完 → 保存済み女優の作品取得」の順で実行します。手動確認したい場合は「今すぐ1回実行」を押してください。</p>
+  <p>1サイクルで「女優情報100件 → 女優画像100人分補完 → 保存済み女優100人分の作品取得」の順に実行します。手動確認したい場合は「今すぐ1回実行」を押してください。</p>
 
   <?php if ($message !== ''): ?>
     <div class="admin-notice <?= $messageType === 'success' ? 'admin-notice--success' : 'admin-notice--error' ?>"><p><?= e($message) ?></p></div>
