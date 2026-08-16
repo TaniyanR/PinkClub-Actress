@@ -6,12 +6,12 @@ require_once __DIR__ . '/app.php';
 require_once __DIR__ . '/dmm_normalizer.php';
 
 /**
- * 画像未取得の保存済み女優を少数ずつ個別APIで補完する。
- * 大量リクエストを避けるため1回最大10人まで。
+ * 画像未取得の保存済み女優をまとめて個別APIで補完する。
+ * cron / 手動とも1サイクル最大100人まで処理できる。
  */
-function pca_enrich_missing_actress_images(int $limit = 5): array
+function pca_enrich_missing_actress_images(int $limit = 100): array
 {
-    $limit = max(1, min(10, $limit));
+    $limit = max(1, min(100, $limit));
     $pdo = db();
     $stmt = $pdo->prepare(
         "SELECT id, dmm_id, name FROM actresses
@@ -162,8 +162,6 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
             ]
         );
 
-        // ItemListを女優IDで絞って取得しているので、今回保存・更新された商品を
-        // 対象女優へ確実に紐付ける。APIレスポンス内のactress配列欠落にも耐える。
         try {
             $link = $pdo->prepare(
                 "INSERT IGNORE INTO item_actresses (item_id, dmm_id, actress_name)
@@ -207,10 +205,10 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
 }
 
 /** @return array{processed_actresses:int,synced_count:int,new_count:int,total_items:int,message:string} */
-function pca_sync_items_for_saved_actresses(int $actressCount = 5, int $batchPerActress = 10): array
+function pca_sync_items_for_saved_actresses(int $actressCount = 100, int $batchPerActress = 10): array
 {
-    $actressCount = max(1, min(10, $actressCount));
-    $batchPerActress = max(1, min(50, $batchPerActress));
+    $actressCount = max(1, min(100, $actressCount));
+    $batchPerActress = max(1, min(100, $batchPerActress));
 
     $processed = 0;
     $synced = 0;
@@ -235,6 +233,6 @@ function pca_sync_items_for_saved_actresses(int $actressCount = 5, int $batchPer
         'synced_count' => $synced,
         'new_count' => $new,
         'total_items' => $totalItems,
-        'message' => $processed . '人分の作品を取得しました' . ($names !== [] ? '（' . implode('、', $names) . '）' : '') . '。',
+        'message' => $processed . '人分の作品を取得しました' . ($names !== [] ? '（' . implode('、', array_slice($names, 0, 10)) . (count($names) > 10 ? 'ほか' : '') . '）' : '') . '。',
     ];
 }
