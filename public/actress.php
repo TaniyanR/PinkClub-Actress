@@ -15,9 +15,31 @@ function pca_detail_profile_value(array $row, string $key): string
     return $value !== '' ? $value : '未登録';
 }
 
+/** @return string[] */
+function pca_detail_equivalent_normal_dmm_ids(string $dmmId, string $name): array
+{
+    $ids = [];
+    $dmmId = trim($dmmId);
+    if ($dmmId !== '' && preg_match('/^[0-9]+$/', $dmmId)) $ids[$dmmId] = true;
+    try {
+        $stmt = db()->prepare("SELECT dmm_id,name FROM actresses WHERE dmm_id REGEXP '^[0-9]+$' AND TRIM(COALESCE(name,''))<>''");
+        $stmt->execute();
+        $target = pca_normalized_person_name($name);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $candidate) {
+            $candidateName = trim((string)($candidate['name'] ?? ''));
+            $candidateId = trim((string)($candidate['dmm_id'] ?? ''));
+            if ($candidateId !== '' && pca_normalized_person_name($candidateName) === $target) $ids[$candidateId] = true;
+        }
+    } catch (Throwable $e) {
+        error_log('equivalent actress id lookup failed: '.$e->getMessage());
+    }
+    return array_keys($ids);
+}
+
 /**
  * 個別ページの商品はitem_actressesを正とする。
- * 通常女優はDMM女優ID、しろうと女性は合成IDで厳密に紐付ける。
+ * 通常女優は代表DMM女優IDを最優先し、同名統合された旧IDに作品がある場合だけ補完する。
+ * しろうと女性は合成IDで厳密に紐付ける。
  */
 function pca_detail_items(int $actressId, string $dmmId, string $name, int $limit, int $offset): array
 {
@@ -37,18 +59,22 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
                  ORDER BY i.release_date DESC,i.id DESC
                  LIMIT {$limit} OFFSET {$offset}"
             );
+            $stmt->execute([':dmm_id'=>$dmmId]);
         } else {
+            $equivalentIds = pca_detail_equivalent_normal_dmm_ids($dmmId, $name);
+            if ($equivalentIds === []) $equivalentIds = [$dmmId];
+            $placeholders = implode(',', array_fill(0, count($equivalentIds), '?'));
             $stmt = $pdo->prepare(
                 "SELECT DISTINCT i.*
                  FROM items i
                  INNER JOIN item_actresses ia ON ia.item_id=i.id
-                 WHERE ia.dmm_id=:dmm_id
+                 WHERE ia.dmm_id IN ({$placeholders})
                    AND i.floor_code='videoa'
                  ORDER BY i.release_date DESC,i.id DESC
                  LIMIT {$limit} OFFSET {$offset}"
             );
+            $stmt->execute($equivalentIds);
         }
-        $stmt->execute([':dmm_id'=>$dmmId]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         if ($rows !== []) return $rows;
     } catch (Throwable $e) {
@@ -57,7 +83,9 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
 
     // 修復前の古いDB向けフォールバック。raw_jsonを正規化し本人IDが実在する作品だけ採用する。
     try {
-        $stmt = $pdo->query("SELECT * FROM items WHERE raw_json IS NOT NULL AND raw_json<>'' ORDER BY release_date DESC,id DESC LIMIT 2000");
+        $equivalentIds = $synthetic ? [$dmmId] : pca_detail_equivalent_normal_dmm_ids($dmmId, $name);
+        $idMap = array_fill_keys($equivalentIds, true);
+        $stmt = $pdo->query("SELECT * FROM items WHERE raw_json IS NOT NULL AND raw_json<>'' ORDER BY release_date DESC,id DESC LIMIT 3000");
         $candidates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
         $matched = [];
         foreach ($candidates as $candidate) {
@@ -73,7 +101,7 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
                 if (!is_array($performer)) continue;
                 $performerId = trim((string)($performer['id'] ?? ''));
                 $performerName = trim((string)($performer['name'] ?? ''));
-                if (!$synthetic && $performerId !== '' && $performerId === $dmmId) {
+                if (!$synthetic && $performerId !== '' && isset($idMap[$performerId])) {
                     $matched[] = $candidate;
                     break;
                 }
