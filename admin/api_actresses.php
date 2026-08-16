@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$totalActresses=$totalItems=$totalImages=$linkedActresses=$unlinkedActresses=$amateurActresses=0;
+$totalActresses=$totalItems=$totalImages=$linkedActresses=$amateurActresses=0;
 $savedRows=[];
 $lastRunAt=site_setting_get('pca_sync_last_run_at','未実行');
 $lastMessage=site_setting_get('pca_sync_last_message','');
@@ -50,8 +50,7 @@ try {
     $totalActresses=(int)$pdo->query("SELECT COUNT(*) FROM actresses WHERE TRIM(COALESCE(name,''))<>''")->fetchColumn();
     $totalItems=(int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
     $totalImages=(int)$pdo->query("SELECT COUNT(*) FROM actresses WHERE COALESCE(image_large,'')<>'' OR COALESCE(image_small,'')<>'' OR COALESCE(image_url,'')<>''")->fetchColumn();
-    $linkedActresses=(int)$pdo->query("SELECT COUNT(DISTINCT a.id) FROM actresses a WHERE EXISTS(SELECT 1 FROM item_actresses ia WHERE ia.dmm_id=a.dmm_id OR ia.actress_name=a.name)")->fetchColumn();
-    $unlinkedActresses=max(0,$totalActresses-$linkedActresses);
+    $linkedActresses=(int)$pdo->query("SELECT COUNT(DISTINCT ia.dmm_id) FROM item_actresses ia INNER JOIN items i ON i.id=ia.item_id WHERE i.floor_code='videoa' AND ia.dmm_id REGEXP '^[0-9]+$'")->fetchColumn();
     $amateurActresses=(int)$pdo->query("SELECT COUNT(DISTINCT ia.actress_name) FROM item_actresses ia INNER JOIN items i ON i.id=ia.item_id WHERE TRIM(COALESCE(ia.actress_name,''))<>'' AND (i.floor_code='videoc' OR i.floor_name LIKE '%素人%' OR i.floor_name LIKE '%しろうと%' OR i.floor_name LIKE '%シロウト%')")->fetchColumn();
     $savedRows=$pdo->query("SELECT id,name,dmm_id,updated_at FROM actresses WHERE TRIM(COALESCE(name,''))<>'' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable) {}
@@ -61,7 +60,8 @@ require __DIR__ . '/includes/header.php';
 <section class="card">
 <h1>女優・作品 API設定</h1>
 <p><strong>自動取得と手動取得は同じ処理です。</strong></p>
-<p>1サイクルで「女優情報100件 → 女優画像100人分補完 → 作品未取得の女優を優先して100人分取得 → しろうとフロア100作品取得」の順に実行します。</p>
+<p>1サイクルで「女優情報100件 → 女優画像100人分補完 → 通常作品100件 → しろうと作品100件 → 既存作品100件の出演者関係を修復」の順に実行します。</p>
+<p>通常作品・しろうと作品とも、商品APIが返した出演者情報を使って女優へ自動で紐付けます。</p>
 <?php if($message!==''): ?><div class="admin-notice <?= $messageType==='success'?'admin-notice--success':'admin-notice--error' ?>"><p><?= e($message) ?></p></div><?php endif; ?>
 <form method="post" class="stack" style="max-width:760px;">
 <?= csrf_input() ?>
@@ -73,8 +73,7 @@ require __DIR__ . '/includes/header.php';
 <article class="admin-card admin-status-card"><strong>保存済み女優</strong><p><?= e(number_format($totalActresses)) ?>人</p></article>
 <article class="admin-card admin-status-card"><strong>画像取得済み女優</strong><p><?= e(number_format($totalImages)) ?>人</p></article>
 <article class="admin-card admin-status-card"><strong>保存済み作品</strong><p><?= e(number_format($totalItems)) ?>件</p></article>
-<article class="admin-card admin-status-card"><strong>作品紐付け済み女優</strong><p><?= e(number_format($linkedActresses)) ?>人</p></article>
-<article class="admin-card admin-status-card"><strong>作品未取得女優</strong><p><?= e(number_format($unlinkedActresses)) ?>人</p></article>
+<article class="admin-card admin-status-card"><strong>通常作品に出演する女優</strong><p><?= e(number_format($linkedActresses)) ?>人</p></article>
 <article class="admin-card admin-status-card"><strong>しろうと女性</strong><p><?= e(number_format($amateurActresses)) ?>人</p></article>
 </div>
 <div class="admin-card" style="margin-top:20px;"><strong>最終同期</strong><p><?= e($lastRunAt!==''?$lastRunAt:'未実行') ?></p><?php if($lastMessage!==''): ?><p><?= e($lastMessage) ?></p><?php endif; ?></div>
