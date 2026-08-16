@@ -7,6 +7,45 @@ require_once __DIR__ . '/dmm_normalizer.php';
 require_once __DIR__ . '/actress_product_coverage.php';
 
 /**
+ * 同じ表示名で別DMM女優IDになっている既存商品関係を、対象女優だけへ軽量にコピーする。
+ *
+ * 以前は全女優・全作品を大きな INSERT ... SELECT で何万件も走査していたため、
+ * 共有サーバーで「今すぐ1回実行」が長時間終わらない原因になっていた。
+ * ここでは今回処理する女優だけを対象にし、外部API通信なしで既存の商品カードを救済する。
+ */
+function pca_direct_copy_existing_products_by_same_name(string $dmmId, string $actressName, int $limit = 200): int
+{
+    $dmmId = trim($dmmId);
+    $actressName = trim($actressName);
+    $limit = max(1, min(500, $limit));
+    if ($dmmId === '' || $actressName === '') {
+        return 0;
+    }
+
+    try {
+        $sql = "INSERT IGNORE INTO item_actresses(item_id,dmm_id,actress_name)
+                SELECT DISTINCT ia.item_id,:dmm_id,:actress_name
+                FROM item_actresses ia
+                INNER JOIN items i ON i.id=ia.item_id
+                WHERE LOWER(REPLACE(REPLACE(TRIM(ia.actress_name),' ',''),'　',''))
+                      = LOWER(REPLACE(REPLACE(TRIM(:match_name),' ',''),'　',''))
+                  AND i.floor_code='videoa'
+                ORDER BY ia.item_id DESC
+                LIMIT {$limit}";
+        $stmt = db()->prepare($sql);
+        $stmt->execute([
+            ':dmm_id'=>$dmmId,
+            ':actress_name'=>$actressName,
+            ':match_name'=>$actressName,
+        ]);
+        return $stmt->rowCount();
+    } catch (Throwable $e) {
+        error_log('targeted same-name product relation copy failed for '.$dmmId.' ('.$actressName.'): '.$e->getMessage());
+        return 0;
+    }
+}
+
+/**
  * 女優を指定した商品取得を1回のItemListリクエストだけで完結させる。
  * syncItemsBatch() は「新規商品数」を満たすまで再リクエストする用途のため、
  * 既存商品が多い女優では同じHTTPリクエスト内でAPI通信が増えやすい。
@@ -23,6 +62,15 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
 
     if ($actressId <= 0 || $dmmId === '' || $actressName === '' || preg_match('/^[0-9]+$/', $dmmId) !== 1) {
         return ['api_count'=>0,'new_count'=>0,'saved_count'=>0,'item_count'=>0];
+    }
+
+    // まずDB内の同名別IDから既存商品を救済する。
+    // ここで商品が見つかれば、商品カード表示という目的は達成できるため外部API通信を省略する。
+    pca_direct_copy_existing_products_by_same_name($dmmId, $actressName, 200);
+    $existingItemCount = pca_product_coverage_count_for_dmm_id($dmmId);
+    if ($existingItemCount > 0) {
+        pca_product_coverage_save_state($actressId, $dmmId, $existingItemCount, 0, '');
+        return ['api_count'=>0,'new_count'=>0,'saved_count'=>0,'item_count'=>$existingItemCount];
     }
 
     $client = dmm_client_for_type('items');
@@ -44,9 +92,7 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
     $newCount = 0;
     $savedCount = 0;
 
-    $sql = 'INSERT INTO items(content_id,product_id,item_source,title,service_code,service_name,floor_code,floor_name,category_name,volume,review_count,review_average,url,affiliate_url,image_list,image_small,image_large,sample_movie_url_476,sample_movie_url_560,sample_movie_url_644,sample_movie_url_720,sample_movie_pc_flag,sample_movie_sp_flag,price_min_text,list_price_text,release_date,raw_json,updated_at)
-            VALUES(:content_id,:product_id,:item_source,:title,:service_code,:service_name,:floor_code,:floor_name,:category_name,:volume,:review_count,:review_average,:url,:affiliate_url,:image_list,:image_small,:image_large,:u476,:u560,:u644,:u720,:pc,:sp,:price_min,:list_price,:release_date,:raw_json,NOW())
-            ON DUPLICATE KEY UPDATE item_source=VALUES(item_source),title=VALUES(title),service_code=VALUES(service_code),service_name=VALUES(service_name),floor_code=VALUES(floor_code),floor_name=VALUES(floor_name),category_name=VALUES(category_name),volume=VALUES(volume),review_count=VALUES(review_count),review_average=VALUES(review_average),url=VALUES(url),affiliate_url=VALUES(affiliate_url),image_list=VALUES(image_list),image_small=VALUES(image_small),image_large=VALUES(image_large),sample_movie_url_476=VALUES(sample_movie_url_476),sample_movie_url_560=VALUES(sample_movie_url_560),sample_movie_url_644=VALUES(sample_movie_url_644),sample_movie_url_720=VALUES(sample_movie_url_720),sample_movie_pc_flag=VALUES(sample_movie_pc_flag),sample_movie_sp_flag=VALUES(sample_movie_sp_flag),price_min_text=VALUES(price_min_text),list_price_text=VALUES(list_price_text),release_date=VALUES(release_date),raw_json=VALUES(raw_json),updated_at=NOW()';
+    $sql = 'INSERT INTO items(content_id,product_id,item_source,title,service_code,service_name,floor_code,floor_name,category_name,volume,review_count,review_average,url,affiliate_url,image_list,image_small,image_large,sample_movie_url_476,sample_movie_url_560,sample_movie_url_644,sample_movie_url_720,sample_movie_pc_flag,sample_movie_sp_flag,price_min_text,list_price_text,release_date,raw_json,updated_at)\n            VALUES(:content_id,:product_id,:item_source,:title,:service_code,:service_name,:floor_code,:floor_name,:category_name,:volume,:review_count,:review_average,:url,:affiliate_url,:image_list,:image_small,:image_large,:u476,:u560,:u644,:u720,:pc,:sp,:price_min,:list_price,:release_date,:raw_json,NOW())\n            ON DUPLICATE KEY UPDATE item_source=VALUES(item_source),title=VALUES(title),service_code=VALUES(service_code),service_name=VALUES(service_name),floor_code=VALUES(floor_code),floor_name=VALUES(floor_name),category_name=VALUES(category_name),volume=VALUES(volume),review_count=VALUES(review_count),review_average=VALUES(review_average),url=VALUES(url),affiliate_url=VALUES(affiliate_url),image_list=VALUES(image_list),image_small=VALUES(image_small),image_large=VALUES(image_large),sample_movie_url_476=VALUES(sample_movie_url_476),sample_movie_url_560=VALUES(sample_movie_url_560),sample_movie_url_644=VALUES(sample_movie_url_644),sample_movie_url_720=VALUES(sample_movie_url_720),sample_movie_pc_flag=VALUES(sample_movie_pc_flag),sample_movie_sp_flag=VALUES(sample_movie_sp_flag),price_min_text=VALUES(price_min_text),list_price_text=VALUES(list_price_text),release_date=VALUES(release_date),raw_json=VALUES(raw_json),updated_at=NOW()';
     $upsert = $pdo->prepare($sql);
     $findId = $pdo->prepare('SELECT id FROM items WHERE content_id=:content_id LIMIT 1');
     $exists = $pdo->prepare('SELECT 1 FROM items WHERE content_id=:content_id LIMIT 1');
