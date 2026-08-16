@@ -5,12 +5,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/repository.php';
 
-/**
- * Actress-focused public catalogue helpers.
- *
- * FANZA ItemList identifies the amateur video floor with floor_code "videoc".
- * We also keep a name fallback so old rows remain classifiable after API changes.
- */
 function pca_amateur_item_sql(string $alias = 'items'): string
 {
     $prefix = $alias !== '' ? $alias . '.' : '';
@@ -25,8 +19,7 @@ function pca_amateur_item_sql(string $alias = 'items'): string
 
 function pca_valid_actress_sql(string $alias = 'actresses'): string
 {
-    return $alias . ".name <> ''"
-        . ' AND ' . $alias . ".dmm_id REGEXP '^[0-9]+$'";
+    return "TRIM(COALESCE({$alias}.name, '')) <> ''";
 }
 
 function pca_actress_has_image_sql(string $alias = 'actresses'): string
@@ -50,16 +43,26 @@ function pca_audience_exists_sql(bool $amateur, string $actressAlias = 'actresse
         . ')';
 }
 
-/** @return array<int,array<string,mixed>> */
+/**
+ * 通常女優は、通常フロアへの出演が確認できた人に加え、
+ * まだ作品同期されておらず分類不能な保存済み女優も含める。
+ * しろうと女性は videoc 等のしろうとフロア出演が確認できた人だけを返す。
+ *
+ * @return array<int,array<string,mixed>>
+ */
 function pca_fetch_actresses(bool $amateur, int $limit = 10000, int $offset = 0, bool $withImagesOnly = false): array
 {
     $limit = max(1, min(10000, $limit));
     $offset = max(0, $offset);
 
-    $where = [
-        pca_valid_actress_sql('a'),
-        pca_audience_exists_sql($amateur, 'a'),
-    ];
+    $where = [pca_valid_actress_sql('a')];
+    if ($amateur) {
+        $where[] = pca_audience_exists_sql(true, 'a');
+    } else {
+        $regularExists = pca_audience_exists_sql(false, 'a');
+        $anyRelation = 'EXISTS (SELECT 1 FROM item_actresses ia_any WHERE ia_any.dmm_id = a.dmm_id)';
+        $where[] = '(' . $regularExists . ' OR NOT ' . $anyRelation . ')';
+    }
     if ($withImagesOnly) {
         $where[] = pca_actress_has_image_sql('a');
     }
@@ -74,25 +77,27 @@ function pca_fetch_actresses(bool $amateur, int $limit = 10000, int $offset = 0,
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     } catch (Throwable $e) {
         error_log('actress catalogue fetch failed: ' . $e->getMessage());
+        // 一覧だけはDB保存済み女優を必ず返せるようフォールバックする。
+        if (!$amateur) {
+            try {
+                $stmt = db()->prepare("SELECT * FROM actresses WHERE TRIM(COALESCE(name, '')) <> '' ORDER BY name ASC, id ASC LIMIT :limit OFFSET :offset");
+                $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+                $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+                $stmt->execute();
+                return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (Throwable $fallbackError) {
+                error_log('actress catalogue fallback failed: ' . $fallbackError->getMessage());
+            }
+        }
         return [];
     }
 }
 
 function pca_count_actresses(bool $amateur, bool $withImagesOnly = false): int
 {
-    $where = [
-        pca_valid_actress_sql('a'),
-        pca_audience_exists_sql($amateur, 'a'),
-    ];
-    if ($withImagesOnly) {
-        $where[] = pca_actress_has_image_sql('a');
-    }
-
     try {
-        $stmt = db()->query('SELECT COUNT(*) FROM actresses a WHERE ' . implode(' AND ', $where));
-        return max(0, (int)$stmt->fetchColumn());
-    } catch (Throwable $e) {
-        error_log('actress catalogue count failed: ' . $e->getMessage());
+        return count(pca_fetch_actresses($amateur, 10000, 0, $withImagesOnly));
+    } catch (Throwable) {
         return 0;
     }
 }
@@ -126,7 +131,6 @@ function pca_seeded_shuffle(array $rows, int $seed): array
 
 /**
  * Build one 120-card home page by mixing regular actresses and amateur actresses.
- * The order changes daily, while remaining stable during a day for SEO/cache friendliness.
  *
  * @return array{rows:array<int,array<string,mixed>>,page:int,pages:int,total:int}
  */
@@ -135,8 +139,9 @@ function pca_home_page(int $page, int $perPage = 120): array
     $page = max(1, $page);
     $perPage = max(1, min(120, $perPage));
 
-    $regular = pca_fetch_actresses(false, 10000, 0, true);
-    $amateur = pca_fetch_actresses(true, 10000, 0, true);
+    // TOPは画像の有無で人数を減らさない。画像有りを先に並べるのは index.php 側で行う。
+    $regular = pca_fetch_actresses(false, 10000, 0, false);
+    $amateur = pca_fetch_actresses(true, 10000, 0, false);
 
     foreach ($regular as &$row) {
         $row['_audience'] = 'regular';
@@ -147,7 +152,6 @@ function pca_home_page(int $page, int $perPage = 120): array
     }
     unset($row);
 
-    // Deduplicate the same actress when she appears on both floors.
     $all = [];
     foreach (array_merge($regular, $amateur) as $row) {
         $id = (int)($row['id'] ?? 0);
@@ -158,7 +162,6 @@ function pca_home_page(int $page, int $perPage = 120): array
             $all[$id] = $row;
             continue;
         }
-        // Prefer the amateur label if the performer is available on both floors.
         if (($row['_audience'] ?? '') === 'amateur') {
             $all[$id] = $row;
         }
