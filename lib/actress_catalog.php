@@ -59,9 +59,25 @@ function pca_normalized_person_name(string $name): string
     return mb_strtolower($value, 'UTF-8');
 }
 
+function pca_normal_item_count_for_dmm_id(string $dmmId): int
+{
+    static $cache = [];
+    $dmmId = trim($dmmId);
+    if ($dmmId === '' || !preg_match('/^[0-9]+$/', $dmmId)) return 0;
+    if (array_key_exists($dmmId, $cache)) return $cache[$dmmId];
+    try {
+        $stmt = db()->prepare("SELECT COUNT(DISTINCT i.id) FROM item_actresses ia INNER JOIN items i ON i.id=ia.item_id WHERE ia.dmm_id=:dmm_id AND i.floor_code='videoa'");
+        $stmt->execute([':dmm_id'=>$dmmId]);
+        return $cache[$dmmId] = (int)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        error_log('actress normal item count failed: '.$e->getMessage());
+        return $cache[$dmmId] = 0;
+    }
+}
+
 function pca_person_row_score(array $row): int
 {
-    $score = 0;
+    $score = pca_normal_item_count_for_dmm_id((string)($row['dmm_id'] ?? '')) * 10000;
     if (pca_actress_image($row) !== '') $score += 100;
     foreach (['ruby','birthday','prefectures'] as $key) if (trim((string)($row[$key] ?? '')) !== '') $score += 10;
     return $score;
