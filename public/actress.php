@@ -14,6 +14,54 @@ function pca_detail_profile_value(array $row, string $key): string
     return $value !== '' ? $value : '未登録';
 }
 
+/**
+ * 女優個別ページ用の商品取得。
+ * まず item_actresses の女優ID/女優名で取得し、過去データで関連テーブルが不足している場合は
+ * raw_json 内の女優ID/女優名もフォールバック検索する。
+ */
+function pca_detail_items(string $dmmId, string $name, int $limit, int $offset): array
+{
+    $limit = max(1, min(100, $limit));
+    $offset = max(0, $offset);
+    $pdo = db();
+
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT DISTINCT i.*
+             FROM items i
+             INNER JOIN item_actresses ia ON ia.item_id = i.id
+             WHERE ia.dmm_id = :dmm_id OR ia.actress_name = :name
+             ORDER BY i.release_date DESC, i.id DESC
+             LIMIT {$limit} OFFSET {$offset}"
+        );
+        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows !== []) {
+            return $rows;
+        }
+    } catch (Throwable $e) {
+        error_log('actress relation item fetch failed: ' . $e->getMessage());
+    }
+
+    // PR適用前に保存された商品にも対応する。
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT i.* FROM items i
+             WHERE i.raw_json LIKE :dmm_like OR i.raw_json LIKE :name_like
+             ORDER BY i.release_date DESC, i.id DESC
+             LIMIT {$limit} OFFSET {$offset}"
+        );
+        $stmt->execute([
+            ':dmm_like' => '%' . $dmmId . '%',
+            ':name_like' => '%' . $name . '%',
+        ]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        error_log('actress raw item fetch failed: ' . $e->getMessage());
+        return [];
+    }
+}
+
 $id = max(0, (int)get('id', 0));
 if ($id <= 0) {
     require __DIR__ . '/404.php';
@@ -32,7 +80,7 @@ if (!is_array($row)) {
 
 $name = trim((string)($row['name'] ?? ''));
 $dmmId = trim((string)($row['dmm_id'] ?? ''));
-if ($name === '' || !ctype_digit($dmmId)) {
+if ($name === '') {
     require __DIR__ . '/404.php';
 }
 
@@ -50,15 +98,9 @@ if ($profileImage === '') {
 $page = max(1, (int)get('page', 1));
 $limit = 24;
 $offset = ($page - 1) * $limit;
-$items = [];
-$hasNext = false;
-try {
-    $loaded = dedupe_items_by_key(fetch_items_by_actress($id, $limit + 1, $offset));
-    [$items, $hasNext] = paginate_items($loaded, $limit);
-} catch (Throwable $e) {
-    error_log('actress items fetch failed: ' . $e->getMessage());
-    $items = [];
-}
+$loaded = pca_detail_items($dmmId, $name, $limit + 1, $offset);
+$loaded = dedupe_items_by_key($loaded);
+[$items, $hasNext] = paginate_items($loaded, $limit);
 
 $rankPeriod = trim((string)get('rank_period', 'daily'));
 $rankTabs = [
@@ -126,7 +168,7 @@ require __DIR__ . '/partials/header.php';
     <?php if ($hasNext): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page + 1))) ?>">次へ</a><?php endif; ?>
   </nav>
 <?php else: ?>
-  <?php pcf_render_empty('この女優の作品情報はまだ取得されていません。プロフィールは女優APIの保存情報から表示しています。'); ?>
+  <?php pcf_render_empty('この女優の作品はまだ同期されていません。cronまたは「今すぐ1回実行」で順番に取得されます。'); ?>
 <?php endif; ?>
 
 <section id="access-ranking" class="block" style="margin-top:28px;">
