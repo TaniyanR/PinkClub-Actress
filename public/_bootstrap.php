@@ -33,10 +33,13 @@ $longCachePublicPages = [
 ];
 $publicPageCacheTtl = in_array($publicScriptName, $longCachePublicPages, true) ? 600 : 120;
 
-// 女優データは管理画面から随時同期されるため、一覧・個別ページは古いHTMLキャッシュを使わない。
-// これにより「DBには女優がいるのに一覧が0件」「作品同期後も個別ページが0件」の状態を防ぐ。
 $actressDynamicPages = ['actresses.php', 'amateur_actresses.php', 'actress.php'];
-if (!in_array($publicScriptName, $actressDynamicPages, true)) {
+if (in_array($publicScriptName, $actressDynamicPages, true)) {
+    // 女優・作品の同期直後にブラウザや中間キャッシュが古い0件HTMLを再利用しないようにする。
+    header('Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+} else {
     pcf_public_page_cache_start($publicPageCacheTtl);
 }
 
