@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/_bootstrap.php';
+
 // Backward compatibility: old links sometimes point to actresses.php?id=123.
 // Treat those as actress detail links instead of returning the directory/404.
 $id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
