@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../public/_bootstrap.php';
 require_once __DIR__ . '/../lib/app.php';
-require_once __DIR__ . '/../lib/actress_item_sync.php';
+require_once __DIR__ . '/../lib/actress_sync_cycle.php';
 
 auth_require_admin();
 
@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)post('action', 'save');
 
     try {
-        if (in_array($action, ['save', 'sync_all', 'sync_actress_items', 'enrich_images'], true)) {
+        if (in_array($action, ['save', 'run_once'], true)) {
             $apiId = trim((string)post('api_id', $apiId));
             $affiliateId = trim((string)post('affiliate_id', $affiliateId));
             api_credential_set('items', $apiId, $affiliateId);
@@ -30,29 +30,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = 'APIID / アフィリエイトIDを保存しました。';
         }
 
-        if ($action === 'sync_all') {
-            $before = (int)db()->query('SELECT COUNT(*) FROM actresses')->fetchColumn();
-            $offset = max(1, (int)site_setting_get('actress_sync_test_offset', '1'));
-            $processed = dmm_sync_service('actresses')->syncMaster('actress', null, $offset, 10);
-            $after = (int)db()->query('SELECT COUNT(*) FROM actresses')->fetchColumn();
-            $nextOffset = $offset + max(10, $processed);
-            site_setting_set_many(['actress_sync_test_offset' => (string)$nextOffset]);
-
-            $images = pca_enrich_missing_actress_images(5);
-            $items = pca_sync_items_for_saved_actresses(5, 10);
-            $message = '女優情報: ' . $processed . '件処理 / 保存済み女優: ' . $after . '人 / 新規女優: ' . max(0, $after - $before) . '人。 '
-                . (string)$images['message'] . ' '
-                . (string)$items['message'] . ' 新規作品: ' . (int)$items['new_count'] . '件 / 保存済み作品: ' . (int)$items['total_items'] . '件';
-        }
-
-        if ($action === 'sync_actress_items') {
-            $result = pca_sync_items_for_saved_actresses(5, 10);
-            $message = (string)$result['message'] . ' 新規作品: ' . (int)$result['new_count'] . '件 / 保存済み作品: ' . (int)$result['total_items'] . '件';
-        }
-
-        if ($action === 'enrich_images') {
-            $result = pca_enrich_missing_actress_images(5);
-            $message = (string)$result['message'];
+        if ($action === 'run_once') {
+            $result = pca_run_sync_cycle();
+            $message = 'cronと同じ取得処理を1回実行しました。' . (string)($result['message'] ?? '');
         }
 
         if ($action === 'delete_actress') {
@@ -72,6 +52,8 @@ $totalActresses = 0;
 $totalItems = 0;
 $totalImages = 0;
 $savedRows = [];
+$lastRunAt = site_setting_get('pca_sync_last_run_at', '未実行');
+$lastMessage = site_setting_get('pca_sync_last_message', '');
 try {
     $totalActresses = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(COALESCE(name, '')) <> ''")->fetchColumn();
     $totalItems = (int)db()->query('SELECT COUNT(*) FROM items')->fetchColumn();
@@ -84,8 +66,8 @@ require __DIR__ . '/includes/header.php';
 ?>
 <section class="card">
   <h1>女優・作品 API設定</h1>
-  <p><strong>この1画面だけで女優と作品を取得します。</strong></p>
-  <p>「女優・作品を取得」で女優情報、女優画像の補完、保存済み女優の出演作品をまとめて取得します。作品は女優個別ページに表示するための補助データです。</p>
+  <p><strong>自動取得と手動取得は同じ処理です。</strong></p>
+  <p>cronの1回分は「女優取得 → 画像補完 → 保存済み女優の作品取得」の順で実行します。手動確認したい場合は「今すぐ1回実行」を押してください。</p>
 
   <?php if ($message !== ''): ?>
     <div class="admin-notice <?= $messageType === 'success' ? 'admin-notice--success' : 'admin-notice--error' ?>"><p><?= e($message) ?></p></div>
@@ -97,9 +79,7 @@ require __DIR__ . '/includes/header.php';
     <div><label>アフィリエイトID<br><input type="text" name="affiliate_id" value="<?= e($affiliateId) ?>" style="width:100%"></label></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="submit" name="action" value="save">保存</button>
-      <button type="submit" name="action" value="sync_all" class="button-secondary">女優・作品を取得</button>
-      <button type="submit" name="action" value="sync_actress_items" class="button-secondary">作品を追加取得（5人分）</button>
-      <button type="submit" name="action" value="enrich_images" class="button-secondary">女優画像を補完（5人分）</button>
+      <button type="submit" name="action" value="run_once" class="button-secondary">今すぐ1回実行</button>
     </div>
   </form>
 
@@ -107,6 +87,12 @@ require __DIR__ . '/includes/header.php';
     <article class="admin-card admin-status-card"><strong>保存済み女優</strong><p><?= e(number_format($totalActresses)) ?>人</p></article>
     <article class="admin-card admin-status-card"><strong>画像取得済み女優</strong><p><?= e(number_format($totalImages)) ?>人</p></article>
     <article class="admin-card admin-status-card"><strong>女優に紐づける作品データ</strong><p><?= e(number_format($totalItems)) ?>件</p></article>
+  </div>
+
+  <div class="admin-card" style="margin-top:20px;">
+    <strong>最終同期</strong>
+    <p><?= e($lastRunAt !== '' ? $lastRunAt : '未実行') ?></p>
+    <?php if ($lastMessage !== ''): ?><p><?= e($lastMessage) ?></p><?php endif; ?>
   </div>
 
   <h2 style="margin-top:24px;">保存済み女優（最新50人）</h2>
