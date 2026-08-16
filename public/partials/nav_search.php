@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_helpers.php';
-require_once __DIR__ . '/../../lib/public_counts.php';
+require_once __DIR__ . '/../../lib/db.php';
 
 $path = (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 $navItems = [
@@ -11,13 +11,12 @@ $navItems = [
     ['href' => public_url('amateur_actresses.php'), 'label' => 'しろうと女性一覧'],
 ];
 
-$sitePostCount = null;
 $siteActressCount = null;
 try {
-    $publicCounts = pcf_public_counts();
-    $sitePostCount = $publicCounts['posts'] ?? null;
-    $siteActressCount = $publicCounts['actresses'] ?? null;
+    $stmt = db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$'");
+    $siteActressCount = $stmt ? (int)$stmt->fetchColumn() : null;
 } catch (Throwable) {
+    $siteActressCount = null;
 }
 ?>
 <details class="site-mobile-menu only-sp">
@@ -28,10 +27,11 @@ try {
                 <a href="<?= e($item['href']) ?>"><?= e($item['label']) ?></a>
             <?php endforeach; ?>
         </div>
+        <?php if ($siteActressCount !== null): ?>
         <div class="site-mobile-menu__group">
-            <?php if ($siteActressCount !== null): ?><a style="color:#000;">登録女優数：<strong><?= e(number_format((int)$siteActressCount)) ?></strong></a><?php endif; ?>
-            <?php if ($sitePostCount !== null): ?><a style="color:#000;">公開作品数：<strong><?= e(number_format((int)$sitePostCount)) ?></strong></a><?php endif; ?>
+            <a style="color:#000;">公開女優数：<strong><?= e(number_format($siteActressCount)) ?></strong></a>
         </div>
+        <?php endif; ?>
     </div>
 </details>
 <nav class="site-nav" aria-label="グローバルナビゲーション">
