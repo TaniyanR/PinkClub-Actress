@@ -17,7 +17,7 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
 
     $rows = $pdo->query(
         "SELECT id, dmm_id, name FROM actresses
-         WHERE name <> '' AND dmm_id REGEXP '^[0-9]+$'
+         WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$'
          ORDER BY id ASC"
     )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -98,5 +98,43 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
         'new_count' => $newCount,
         'total_items' => $afterCount,
         'message' => $actressName . ' の作品を取得しました（' . implode(' / ', $messages) . '）。',
+    ];
+}
+
+/**
+ * 1回の操作で複数の保存済み女優を順番に処理する。
+ * 既存女優が多いサイトでも、何度も1人ずつボタンを押さなくて済むようにする。
+ *
+ * @return array{processed_actresses:int,synced_count:int,new_count:int,total_items:int,message:string}
+ */
+function pca_sync_items_for_saved_actresses(int $actressCount = 5, int $batchPerActress = 10): array
+{
+    $actressCount = max(1, min(10, $actressCount));
+    $batchPerActress = max(1, min(50, $batchPerActress));
+
+    $processed = 0;
+    $synced = 0;
+    $new = 0;
+    $totalItems = (int)db()->query('SELECT COUNT(*) FROM items')->fetchColumn();
+    $names = [];
+
+    for ($i = 0; $i < $actressCount; $i++) {
+        $result = pca_sync_items_for_next_saved_actress($batchPerActress);
+        $processed++;
+        $synced += (int)($result['synced_count'] ?? 0);
+        $new += (int)($result['new_count'] ?? 0);
+        $totalItems = (int)($result['total_items'] ?? $totalItems);
+        $name = trim((string)($result['actress_name'] ?? ''));
+        if ($name !== '') {
+            $names[] = $name;
+        }
+    }
+
+    return [
+        'processed_actresses' => $processed,
+        'synced_count' => $synced,
+        'new_count' => $new,
+        'total_items' => $totalItems,
+        'message' => $processed . '人分の作品を取得しました' . ($names !== [] ? '（' . implode('、', $names) . '）' : '') . '。',
     ];
 }
