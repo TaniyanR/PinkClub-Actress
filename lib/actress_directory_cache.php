@@ -58,8 +58,7 @@ function pcf_actress_directory_cache_rebuild(bool $force = false): array
             $id=(int)($row['id']??0);$name=trim((string)($row['name']??''));
             if($id<=0||$name===''||pcf_actress_directory_invalid_name($name))continue;
             $key=pcf_actress_directory_group_key($row);if($key==='')continue;
-            $image=pca_actress_image($row);
-            $groups[$key][]=[$id,$name,$image];
+            $groups[$key][]=[$id,$name,pca_actress_image($row)];
         }
         foreach($groups as &$groupRows)usort($groupRows,static fn(array $a,array $b):int=>strcmp(mb_strtolower((string)$a[1],'UTF-8'),mb_strtolower((string)$b[1],'UTF-8')));unset($groupRows);
 
