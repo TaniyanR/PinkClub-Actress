@@ -15,8 +15,66 @@ function pca_detail_profile_value(array $row, string $key): string
 }
 
 /**
+ * 通常女優の商品取得。
+ *
+ * まず現在のDMM女優IDで直接取得する。
+ * 0件の場合だけ、女優APIと商品APIで同じ人物名なのにDMM IDが異なる既存データを
+ * item_actresses.actress_name から軽量に救済する。
+ * raw_json全件走査や全女優PHP走査は行わない。
+ */
+function pca_detail_normal_items(string $dmmId, string $name, int $limit, int $offset): array
+{
+    $dmmId = trim($dmmId);
+    $name = trim($name);
+    $limit = max(1, min(100, $limit));
+    $offset = max(0, $offset);
+
+    try {
+        if ($dmmId !== '') {
+            $stmt = db()->prepare(
+                "SELECT DISTINCT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id = i.id
+                 WHERE ia.dmm_id = :dmm_id
+                   AND i.floor_code = 'videoa'
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+            $stmt->execute([':dmm_id' => $dmmId]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if ($rows !== []) {
+                return $rows;
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('normal actress exact item fetch failed: ' . $e->getMessage());
+    }
+
+    if ($name === '') {
+        return [];
+    }
+
+    try {
+        $stmt = db()->prepare(
+            "SELECT DISTINCT i.*
+             FROM items i
+             INNER JOIN item_actresses ia ON ia.item_id = i.id
+             WHERE i.floor_code = 'videoa'
+               AND LOWER(REPLACE(REPLACE(TRIM(ia.actress_name), ' ', ''), '　', ''))
+                   = LOWER(REPLACE(REPLACE(TRIM(:actress_name), ' ', ''), '　', ''))
+             ORDER BY i.release_date DESC, i.id DESC
+             LIMIT {$limit} OFFSET {$offset}"
+        );
+        $stmt->execute([':actress_name' => $name]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        error_log('normal actress name fallback item fetch failed: ' . $e->getMessage());
+        return [];
+    }
+}
+
+/**
  * しろうと女性だけは合成IDを使うため、videocの関係を直接取得する。
- * 通常女優はPinkClub-FANZAと同じfetch_items_by_actress()を使う。
  */
 function pca_detail_amateur_items(string $dmmId, int $limit, int $offset): array
 {
@@ -97,7 +155,7 @@ $offset = ($page - 1) * $limit;
 try {
     $loaded = $isAmateur
         ? pca_detail_amateur_items($dmmId, $limit + 1, $offset)
-        : fetch_items_by_actress($id, $limit + 1, $offset);
+        : pca_detail_normal_items($dmmId, $name, $limit + 1, $offset);
 } catch (Throwable $e) {
     error_log('actress item fetch failed: ' . $e->getMessage());
     $loaded = [];
