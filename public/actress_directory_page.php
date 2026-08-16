@@ -11,6 +11,32 @@ require_once __DIR__ . '/../lib/actress_catalog.php';
 require_once __DIR__ . '/../lib/actress_directory_cache.php';
 require_once __DIR__ . '/partials/public_ui.php';
 
+function pca_directory_work_image(array $row): string
+{
+    $dmmId = trim((string)($row['dmm_id'] ?? ''));
+    $name = trim((string)($row['name'] ?? ''));
+    if ($dmmId === '' && $name === '') {
+        return '';
+    }
+
+    try {
+        $stmt = db()->prepare(
+            "SELECT i.*
+             FROM items i
+             INNER JOIN item_actresses ia ON ia.item_id = i.id
+             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
+             ORDER BY i.release_date DESC, i.id DESC
+             LIMIT 1"
+        );
+        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
+        $item = $stmt->fetch(PDO::FETCH_ASSOC);
+        return is_array($item) ? pcf_item_image($item) : '';
+    } catch (Throwable $e) {
+        error_log('amateur directory work image failed: ' . $e->getMessage());
+        return '';
+    }
+}
+
 $directoryTitle = $pcaDirectoryAmateur ? 'しろうと女性一覧' : '女優一覧';
 $directorySubtitle = $pcaDirectoryAmateur ? '気になるしろうと女性のプロフィールと出演作品へ。' : '気になる女優のプロフィールと出演作品へ。';
 $directoryGroups = [];
@@ -40,7 +66,6 @@ if (!$pcaDirectoryAmateur) {
         error_log('public actress directory cache read failed: ' . $e->getMessage());
     }
 } else {
-    // videocの商品に含まれる出演者をしろうと女性マスタへ補完する。
     try {
         $pdo = db();
         $pdo->exec(
@@ -63,10 +88,14 @@ if (!$pcaDirectoryAmateur) {
     $grouped = pca_group_actresses($rows);
     foreach ($grouped as $key => $groupRows) {
         foreach ($groupRows as $row) {
+            $image = pca_actress_image(is_array($row) ? $row : []);
+            if ($image === '') {
+                $image = pca_directory_work_image(is_array($row) ? $row : []);
+            }
             $directoryGroups[$key][] = [
                 'id'=>(int)($row['id'] ?? 0),
                 'name'=>(string)($row['name'] ?? ''),
-                'image'=>pca_actress_image(is_array($row) ? $row : []),
+                'image'=>$image,
             ];
             $totalRows++;
         }
