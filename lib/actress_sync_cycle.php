@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/app.php';
 require_once __DIR__ . '/actress_item_sync.php';
+require_once __DIR__ . '/actress_relation_aliases.php';
 
 function pca_run_sync_cycle(): array
 {
@@ -22,13 +23,15 @@ function pca_run_sync_cycle(): array
     $normal = pca_sync_normal_floor_batch(100);
     $amateur = pca_sync_amateur_floor_batch(100);
     $repair = pca_repair_item_actress_relations_batch(100);
+    $aliases = pca_backfill_normal_actress_alias_relations();
 
     $newActresses = max(0, $afterActresses - $beforeActresses);
     $message = '女優 '.$processedActresses.'件取得（新規 '.$newActresses.'人） / '
         . '画像 '.(int)($images['processed'] ?? 0).'人確認・'.(int)($images['updated'] ?? 0).'人補完 / '
         . '通常作品 '.(int)($normal['api_count'] ?? 0).'件取得（新規 '.(int)($normal['new_count'] ?? 0).'件） / '
         . 'しろうと作品 '.(int)($amateur['api_count'] ?? 0).'件取得（登録しろうと女性 '.(int)($amateur['amateur_count'] ?? 0).'人） / '
-        . '既存作品の出演者関係 '.(int)($repair['processed'] ?? 0).'件修復';
+        . '既存作品の出演者関係 '.(int)($repair['processed'] ?? 0).'件修復 / '
+        . '同名女優の商品関係 '.(int)($aliases['added'] ?? 0).'件補完';
 
     site_setting_set_many([
         'pca_sync_last_run_at'=>date('Y-m-d H:i:s'),
@@ -46,6 +49,7 @@ function pca_run_sync_cycle(): array
         'linked_actresses'=>(int)($normal['linked_actresses'] ?? 0),
         'amateur_count'=>(int)($amateur['amateur_count'] ?? 0),
         'relations_repaired'=>(int)($repair['processed'] ?? 0),
+        'alias_relations_added'=>(int)($aliases['added'] ?? 0),
         'message'=>$message,
     ];
 }
