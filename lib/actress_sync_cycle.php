@@ -25,8 +25,9 @@ function pca_run_sync_cycle(): array
     $repair = pca_repair_item_actress_relations_batch(100);
 
     // PinkClub-Actressの主役は保存済み女優。
-    // videoa全体を100作品だけ取るのではなく、商品未取得の保存済み女優100人を直接検索する。
-    $normal = pca_sync_saved_actress_product_coverage(100, 10);
+    // 1サイクル100人を直接検索し、まず各女優に最低1作品を行き渡らせる。
+    // これにより100人確認でもAPIの無駄な再ページングを避け、商品カードの対象人数を最速で増やす。
+    $normal = pca_sync_saved_actress_product_coverage(100, 1);
 
     // しろうと女性は女優APIに存在しないため、従来どおりvideocフロアを100作品ずつ巡回する。
     $amateur = pca_sync_amateur_floor_batch(100);
