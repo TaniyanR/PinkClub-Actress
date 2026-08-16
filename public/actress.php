@@ -15,29 +15,9 @@ function pca_detail_profile_value(array $row, string $key): string
     return $value !== '' ? $value : '未登録';
 }
 
-function pca_detail_raw_item_matches(array $item, string $dmmId, string $name, bool $synthetic): bool
-{
-    $raw = json_decode((string)($item['raw_json'] ?? ''), true);
-    if (!is_array($raw)) return false;
-    $normalized = DmmNormalizer::normalizeItemsResponse(['result'=>['items'=>[$raw]]]);
-    $normalizedItem = $normalized[0] ?? null;
-    if (!is_array($normalizedItem)) return false;
-    foreach (($normalizedItem['actresses'] ?? []) as $performer) {
-        if (!is_array($performer)) continue;
-        $performerId = trim((string)($performer['id'] ?? ''));
-        $performerName = trim((string)($performer['name'] ?? ''));
-        if ($synthetic) {
-            if ($performerName !== '' && mb_strtolower($performerName, 'UTF-8') === mb_strtolower($name, 'UTF-8')) return true;
-        } elseif ($performerId !== '' && $performerId === $dmmId) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /**
- * 個別ページの商品はDBのraw_jsonを正として本人確認する。
- * 過去に誤って作られたitem_actressesが残っていても、他人の商品は表示しない。
+ * 個別ページの商品はitem_actressesを正とする。
+ * 通常女優はDMM女優ID、しろうと女性は合成IDで厳密に紐付ける。
  */
 function pca_detail_items(int $actressId, string $dmmId, string $name, int $limit, int $offset): array
 {
@@ -49,58 +29,66 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
     try {
         if ($synthetic) {
             $stmt = $pdo->prepare(
-                "SELECT i.* FROM items i
-                 WHERE i.raw_json LIKE :name_like
+                "SELECT DISTINCT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id=i.id
+                 WHERE ia.dmm_id=:dmm_id
                    AND " . pca_amateur_item_sql('i') . "
-                 ORDER BY i.release_date DESC, i.id DESC
-                 LIMIT 1000"
-            );
-            $stmt->execute([':name_like'=>'%'.$name.'%']);
-        } else {
-            $quoted = '%\"id\":\"' . $dmmId . '\"%';
-            $numeric = '%\"id\":' . $dmmId . '%';
-            $stmt = $pdo->prepare(
-                "SELECT i.* FROM items i
-                 WHERE i.raw_json LIKE :quoted OR i.raw_json LIKE :numeric
-                 ORDER BY i.release_date DESC, i.id DESC
-                 LIMIT 1000"
-            );
-            $stmt->execute([':quoted'=>$quoted, ':numeric'=>$numeric]);
-        }
-        $candidates = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        $verified = [];
-        foreach ($candidates as $candidate) {
-            if (is_array($candidate) && pca_detail_raw_item_matches($candidate, $dmmId, $name, $synthetic)) {
-                $verified[] = $candidate;
-            }
-        }
-        if ($verified !== []) return array_slice($verified, $offset, $limit);
-    } catch (Throwable $e) {
-        error_log('actress raw verified item fetch failed: ' . $e->getMessage());
-    }
-
-    // raw_jsonが欠損した古いレコードだけ、修復済みrelationをフォールバックにする。
-    try {
-        if ($synthetic) {
-            $stmt = $pdo->prepare(
-                "SELECT DISTINCT i.* FROM items i
-                 INNER JOIN item_actresses ia ON ia.item_id=i.id
-                 WHERE ia.dmm_id=:dmm_id AND " . pca_amateur_item_sql('i') . "
-                   AND (i.raw_json IS NULL OR i.raw_json='')
-                 ORDER BY i.release_date DESC,i.id DESC LIMIT {$limit} OFFSET {$offset}"
+                 ORDER BY i.release_date DESC,i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
             );
         } else {
             $stmt = $pdo->prepare(
-                "SELECT DISTINCT i.* FROM items i
+                "SELECT DISTINCT i.*
+                 FROM items i
                  INNER JOIN item_actresses ia ON ia.item_id=i.id
-                 WHERE ia.dmm_id=:dmm_id AND (i.raw_json IS NULL OR i.raw_json='')
-                 ORDER BY i.release_date DESC,i.id DESC LIMIT {$limit} OFFSET {$offset}"
+                 WHERE ia.dmm_id=:dmm_id
+                   AND i.floor_code='videoa'
+                 ORDER BY i.release_date DESC,i.id DESC
+                 LIMIT {$limit} OFFSET {$offset}"
             );
         }
         $stmt->execute([':dmm_id'=>$dmmId]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows !== []) return $rows;
     } catch (Throwable $e) {
-        error_log('actress relation fallback failed: ' . $e->getMessage());
+        error_log('actress relation item fetch failed: '.$e->getMessage());
+    }
+
+    // 修復前の古いDB向けフォールバック。raw_jsonを正規化し本人IDが実在する作品だけ採用する。
+    try {
+        $stmt = $pdo->query("SELECT * FROM items WHERE raw_json IS NOT NULL AND raw_json<>'' ORDER BY release_date DESC,id DESC LIMIT 2000");
+        $candidates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $matched = [];
+        foreach ($candidates as $candidate) {
+            if (!is_array($candidate)) continue;
+            $raw = json_decode((string)($candidate['raw_json'] ?? ''), true);
+            if (!is_array($raw)) continue;
+            $normalized = DmmNormalizer::normalizeItemsResponse(['result'=>['items'=>[$raw]]]);
+            $item = $normalized[0] ?? null;
+            if (!is_array($item)) continue;
+            $isAmateurItem = strtolower(trim((string)($item['floor_code'] ?? ''))) === 'videoc';
+            if ($synthetic !== $isAmateurItem) continue;
+            foreach (($item['actresses'] ?? []) as $performer) {
+                if (!is_array($performer)) continue;
+                $performerId = trim((string)($performer['id'] ?? ''));
+                $performerName = trim((string)($performer['name'] ?? ''));
+                if (!$synthetic && $performerId !== '' && $performerId === $dmmId) {
+                    $matched[] = $candidate;
+                    break;
+                }
+                if ($synthetic) {
+                    $syntheticId = 'name:' . sha1(mb_strtolower($performerName, 'UTF-8'));
+                    if ($performerName !== '' && $syntheticId === $dmmId) {
+                        $matched[] = $candidate;
+                        break;
+                    }
+                }
+            }
+        }
+        return array_slice($matched, $offset, $limit);
+    } catch (Throwable $e) {
+        error_log('actress raw item fallback failed: '.$e->getMessage());
         return [];
     }
 }
@@ -190,17 +178,19 @@ require __DIR__ . '/partials/header.php';
 <?php if (!$isAmateur): ?>
 <script>
 (() => {
-  const endpoint = <?= json_encode(public_url('actress_profile.php?id='.$id), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
-  fetch(endpoint,{credentials:'same-origin',headers:{'Accept':'application/json'}})
-    .then(r=>r.ok?r.json():null).then(data=>{
-      if(!data||!data.success||!data.display)return;
-      document.querySelectorAll('[data-actress-profile]').forEach(node=>{
-        const key=node.getAttribute('data-actress-profile');
-        if(key&&Object.prototype.hasOwnProperty.call(data.display,key))node.textContent=String(data.display[key]||'未登録');
+  const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+  fetch(endpoint, {credentials:'same-origin', headers:{'Accept':'application/json'}})
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => {
+      if (!data || !data.success || !data.display) return;
+      document.querySelectorAll('[data-actress-profile]').forEach((node) => {
+        const key = node.getAttribute('data-actress-profile');
+        if (key && Object.prototype.hasOwnProperty.call(data.display, key)) node.textContent = String(data.display[key] || '未登録');
       });
-      const image=document.getElementById('actress-profile-image');
-      if(image&&data.image_url)image.src=String(data.image_url);
-    }).catch(()=>{});
+      const image = document.getElementById('actress-profile-image');
+      if (image && data.image_url) image.src = String(data.image_url);
+    })
+    .catch(() => {});
 })();
 </script>
 <?php endif; ?>
@@ -208,29 +198,28 @@ require __DIR__ . '/partials/header.php';
 <h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>
   <section class="pcf-related-grid pcf-item-related-grid pcf-actress-related-grid">
-    <?php foreach ($items as $item): pcf_render_item_card(is_array($item)?$item:[]); endforeach; ?>
+    <?php foreach ($items as $item): pcf_render_item_card(is_array($item) ? $item : []); endforeach; ?>
   </section>
   <nav class="pcf-pagination" aria-label="ページネーション">
-    <?php if($page>1): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id='.$id.'&page='.($page-1))) ?>">前へ</a><?php endif; ?>
+    <?php if ($page > 1): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page - 1))) ?>">前へ</a><?php endif; ?>
     <span class="pcf-pagination__link is-current"><?= e((string)$page) ?></span>
-    <?php if($hasNext): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id='.$id.'&page='.($page+1))) ?>">次へ</a><?php endif; ?>
+    <?php if ($hasNext): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page + 1))) ?>">次へ</a><?php endif; ?>
   </nav>
 <?php else: ?>
-  <?php pcf_render_empty('この女性の保存済み作品はまだ確認できません。cronまたは「今すぐ1回実行」で順番にAPI確認されます。'); ?>
+  <?php pcf_render_empty('この女性に紐づく保存済み作品はまだありません。cronまたは「今すぐ1回実行」で商品100件ずつ取得されます。'); ?>
 <?php endif; ?>
 
 <section id="access-ranking" class="block" style="margin-top:24px;">
   <h2 class="section-title">人気の女優ランキング！</h2>
   <div class="pca-rank-tabs">
-    <?php foreach($rankTabs as $key=>$label): ?>
+    <?php foreach ($rankTabs as $key=>$label): ?>
       <a class="<?= $rankPeriod===$key?'is-active':'' ?>" href="<?= e(public_url('actress.php?id='.$id.'&rank_period='.$key.'#access-ranking')) ?>" rel="nofollow"><?= e($label) ?></a>
     <?php endforeach; ?>
   </div>
-  <?php if($ranking!==[]): ?>
+  <?php if ($ranking !== []): ?>
     <div class="pca-ranking">
-      <?php foreach(array_slice($ranking,0,20) as $rankRow):
-        $rankId=(int)($rankRow['id']??0); $rankName=trim((string)($rankRow['name']??''));
-        $rankImage=pca_actress_image($rankRow); if($rankImage==='')$rankImage=pcf_placeholder_data_uri('No Photo'); ?>
+      <?php foreach (array_slice($ranking,0,20) as $rankRow): ?>
+        <?php $rankId=(int)($rankRow['id']??0); $rankName=trim((string)($rankRow['name']??'')); $rankImage=pca_actress_image($rankRow); if($rankImage==='')$rankImage=pcf_placeholder_data_uri('No Photo'); ?>
         <a href="<?= e(public_url('actress.php?id='.$rankId)) ?>"><img src="<?= e($rankImage) ?>" alt="<?= e($rankName) ?>" loading="lazy"><span><?= e($rankName) ?></span></a>
       <?php endforeach; ?>
     </div>
