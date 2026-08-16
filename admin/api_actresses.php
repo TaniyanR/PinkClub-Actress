@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)post('action', 'save');
 
     try {
-        if (in_array($action, ['save', 'sync_all', 'sync_actress_items'], true)) {
+        if (in_array($action, ['save', 'sync_all', 'sync_actress_items', 'enrich_images'], true)) {
             $apiId = trim((string)post('api_id', $apiId));
             $affiliateId = trim((string)post('affiliate_id', $affiliateId));
             api_credential_set('items', $apiId, $affiliateId);
@@ -38,14 +38,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nextOffset = $offset + max(10, $processed);
             site_setting_set_many(['actress_sync_test_offset' => (string)$nextOffset]);
 
+            $images = pca_enrich_missing_actress_images(5);
             $items = pca_sync_items_for_saved_actresses(5, 10);
             $message = '女優情報: ' . $processed . '件処理 / 保存済み女優: ' . $after . '人 / 新規女優: ' . max(0, $after - $before) . '人。 '
+                . (string)$images['message'] . ' '
                 . (string)$items['message'] . ' 新規作品: ' . (int)$items['new_count'] . '件 / 保存済み作品: ' . (int)$items['total_items'] . '件';
         }
 
         if ($action === 'sync_actress_items') {
             $result = pca_sync_items_for_saved_actresses(5, 10);
             $message = (string)$result['message'] . ' 新規作品: ' . (int)$result['new_count'] . '件 / 保存済み作品: ' . (int)$result['total_items'] . '件';
+        }
+
+        if ($action === 'enrich_images') {
+            $result = pca_enrich_missing_actress_images(5);
+            $message = (string)$result['message'];
         }
 
         if ($action === 'delete_actress') {
@@ -63,11 +70,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $totalActresses = 0;
 $totalItems = 0;
+$totalImages = 0;
 $savedRows = [];
 try {
-    $totalActresses = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$'")->fetchColumn();
+    $totalActresses = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE TRIM(COALESCE(name, '')) <> ''")->fetchColumn();
     $totalItems = (int)db()->query('SELECT COUNT(*) FROM items')->fetchColumn();
-    $savedRows = db()->query("SELECT id, name, dmm_id, updated_at FROM actresses WHERE TRIM(name) <> '' AND dmm_id REGEXP '^[0-9]+$' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $totalImages = (int)db()->query("SELECT COUNT(*) FROM actresses WHERE COALESCE(image_large, '') <> '' OR COALESCE(image_small, '') <> '' OR COALESCE(image_url, '') <> ''")->fetchColumn();
+    $savedRows = db()->query("SELECT id, name, dmm_id, updated_at FROM actresses WHERE TRIM(COALESCE(name, '')) <> '' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable) {
 }
 
@@ -76,7 +85,7 @@ require __DIR__ . '/includes/header.php';
 <section class="card">
   <h1>女優・作品 API設定</h1>
   <p><strong>この1画面だけで女優と作品を取得します。</strong></p>
-  <p>「女優・作品を取得」を押すと、女優情報を10件取得したあと、DBに保存済みの女優5人分の出演作品を取得します。作品は女優個別ページへ表示するための補助データです。</p>
+  <p>「女優・作品を取得」で女優情報、女優画像の補完、保存済み女優の出演作品をまとめて取得します。作品は女優個別ページに表示するための補助データです。</p>
 
   <?php if ($message !== ''): ?>
     <div class="admin-notice <?= $messageType === 'success' ? 'admin-notice--success' : 'admin-notice--error' ?>"><p><?= e($message) ?></p></div>
@@ -90,11 +99,13 @@ require __DIR__ . '/includes/header.php';
       <button type="submit" name="action" value="save">保存</button>
       <button type="submit" name="action" value="sync_all" class="button-secondary">女優・作品を取得</button>
       <button type="submit" name="action" value="sync_actress_items" class="button-secondary">作品を追加取得（5人分）</button>
+      <button type="submit" name="action" value="enrich_images" class="button-secondary">女優画像を補完（5人分）</button>
     </div>
   </form>
 
   <div class="admin-status-grid" style="margin-top:20px;">
     <article class="admin-card admin-status-card"><strong>保存済み女優</strong><p><?= e(number_format($totalActresses)) ?>人</p></article>
+    <article class="admin-card admin-status-card"><strong>画像取得済み女優</strong><p><?= e(number_format($totalImages)) ?>人</p></article>
     <article class="admin-card admin-status-card"><strong>女優に紐づける作品データ</strong><p><?= e(number_format($totalItems)) ?>件</p></article>
   </div>
 
