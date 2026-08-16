@@ -20,15 +20,29 @@ function pca_directory_work_image(array $row): string
     }
 
     try {
-        $stmt = db()->prepare(
-            "SELECT i.*
-             FROM items i
-             INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT 1"
-        );
-        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
+        if (pca_is_synthetic_amateur_id($dmmId)) {
+            $stmt = db()->prepare(
+                "SELECT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id = i.id
+                 WHERE ia.actress_name = :name
+                   AND " . pca_amateur_item_sql('i') . "
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT 1"
+            );
+            $stmt->execute([':name' => $name]);
+        } else {
+            $stmt = db()->prepare(
+                "SELECT i.*
+                 FROM items i
+                 INNER JOIN item_actresses ia ON ia.item_id = i.id
+                 WHERE ia.dmm_id = :dmm_id
+                   AND " . pca_amateur_item_sql('i') . "
+                 ORDER BY i.release_date DESC, i.id DESC
+                 LIMIT 1"
+            );
+            $stmt->execute([':dmm_id' => $dmmId]);
+        }
         $item = $stmt->fetch(PDO::FETCH_ASSOC);
         return is_array($item) ? pcf_item_image($item) : '';
     } catch (Throwable $e) {
@@ -90,6 +104,7 @@ if (!$pcaDirectoryAmateur) {
         foreach ($groupRows as $row) {
             $image = pca_actress_image(is_array($row) ? $row : []);
             if ($image === '') {
+                // 作品のフルパッケージ画像を人物画像として使うのは、しろうと女性一覧だけ。
                 $image = pca_directory_work_image(is_array($row) ? $row : []);
             }
             $directoryGroups[$key][] = [
