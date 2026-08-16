@@ -183,7 +183,7 @@ function pca_product_coverage_save_state(int $actressId, string $dmmId, int $ite
  * 未確認かつ商品0件の女優を最優先するので、同じ0件女優だけで処理が止まらず、
  * サイクルを重ねるごとに全女優へ商品カードの対象範囲が広がる。
  */
-function pca_sync_saved_actress_product_coverage(int $actressLimit = 100, int $itemsPerActress = 10): array
+function pca_sync_saved_actress_product_coverage(int $actressLimit = 100, int $itemsPerActress = 1): array
 {
     $actressLimit = max(1, min(100, $actressLimit));
     $itemsPerActress = max(1, min(100, $itemsPerActress));
@@ -228,9 +228,6 @@ function pca_sync_saved_actress_product_coverage(int $actressLimit = 100, int $i
             $targetApiCount = (int)($result['api_count'] ?? 0);
             $apiCount += $targetApiCount;
             $newItems += (int)($result['new_count'] ?? 0);
-
-            // API側の人物IDが女優マスタと異なる場合でも、同名出演者なら代表女優IDへ補完する。
-            pca_product_coverage_repair_name_aliases(1000);
         } catch (Throwable $e) {
             $errors++;
             $error = $e->getMessage();
@@ -248,6 +245,7 @@ function pca_sync_saved_actress_product_coverage(int $actressLimit = 100, int $i
         }
     }
 
+    // 100人分の取得が終わった後に1回だけ同名ID差を補完する。ループ内で全件走査しない。
     $aliasesAfter = pca_product_coverage_repair_name_aliases(5000);
     $coverageAfter = pca_product_coverage_count_linked_actresses();
 
