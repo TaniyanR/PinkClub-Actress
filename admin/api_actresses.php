@@ -28,8 +28,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = 'APIID / アフィリエイトIDを保存しました。';
         }
         if ($action === 'run_once') {
-            // 実行ボタンでは入力欄の値を保存しない。
-            // ブラウザの自動入力や空欄送信で保存済みAPI情報を消さないため。
             $savedCred = api_credential_get('items');
             $savedApiId = trim((string)($savedCred['api_id'] ?? ''));
             $savedAffiliateId = trim((string)($savedCred['affiliate_id'] ?? ''));
@@ -75,8 +73,8 @@ require __DIR__ . '/includes/header.php';
 <section class="card">
 <h1>女優・作品 API設定</h1>
 <p><strong>自動取得と手動取得は同じ処理です。</strong></p>
-<p>1サイクルで「女優情報100件 → 女優画像10人補完 → 既存作品100件の出演者関係を修復 → 通常女優10人×最大10作品（最大100作品）を直接取得 → しろうと作品100件」の順に実行します。</p>
-<p><strong>通常商品の外部API通信は最大10回に制限しました。</strong> 以前の「100女優を1人ずつ100回通信」は共有サーバーの実行時間を超えるため廃止しています。取得した作品は、検索に使ったDMM女優IDへ必ず紐付けて商品カードへ渡します。</p>
+<p>1サイクルで「女優情報100件 → 女優画像10人補完 → 既存作品100件の出演者関係を修復 → 通常女優10人×最大10作品（最大100作品）を直接取得 → 同名の別DMM女優IDへ商品関係を補完 → しろうと作品100件」の順に実行します。</p>
+<p><strong>通常商品の外部API通信は最大10回です。</strong> 商品取得後、女優APIと商品APIで同じ名前なのにDMM女優IDが異なる既存データもDB内で補正します。これにより、女優一覧キャッシュが別IDを保持している場合でも商品カードを表示できる状態へ揃えます。</p>
 <?php if($message!==''): ?><div class="admin-notice <?= $messageType==='success'?'admin-notice--success':'admin-notice--error' ?>"><p><?= e($message) ?></p></div><?php endif; ?>
 <form method="post" class="stack" style="max-width:760px;">
 <?= csrf_input() ?>
