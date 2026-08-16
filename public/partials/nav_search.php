@@ -8,7 +8,7 @@ $path = (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 $navItems = [
     ['href' => public_url(''), 'label' => 'TOP'],
     ['href' => public_url('actresses.php'), 'label' => '女優一覧'],
-    ['href' => public_url('amateur_actresses.php'), 'label' => 'しろうと女優一覧'],
+    ['href' => public_url('amateur_actresses.php'), 'label' => 'しろうと女性一覧'],
 ];
 
 $sitePostCount = null;
