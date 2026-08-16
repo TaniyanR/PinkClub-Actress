@@ -16,24 +16,14 @@ function pca_detail_profile_value(array $row, string $key): string
 
 /**
  * 女優個別ページ用の商品取得。
- * 既存PinkClub-FANZAと同じrepository経路を最優先し、
- * DMM ID/女優名の関係テーブル、最後にraw_jsonをフォールバックする。
+ * item_actresses の実際の紐付けを最優先し、既存repository、raw_jsonの順にフォールバックする。
  */
 function pca_detail_items(int $actressId, string $dmmId, string $name, int $limit, int $offset): array
 {
     $limit = max(1, min(100, $limit));
     $offset = max(0, $offset);
-
-    try {
-        $rows = fetch_items_by_actress($actressId, $limit, $offset);
-        if ($rows !== []) {
-            return $rows;
-        }
-    } catch (Throwable $e) {
-        error_log('repository actress item fetch failed: ' . $e->getMessage());
-    }
-
     $pdo = db();
+
     try {
         $stmt = $pdo->prepare(
             "SELECT DISTINCT i.*
@@ -49,7 +39,16 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
             return $rows;
         }
     } catch (Throwable $e) {
-        error_log('actress relation item fetch failed: ' . $e->getMessage());
+        error_log('actress direct relation item fetch failed: ' . $e->getMessage());
+    }
+
+    try {
+        $rows = fetch_items_by_actress($actressId, $limit, $offset);
+        if ($rows !== []) {
+            return $rows;
+        }
+    } catch (Throwable $e) {
+        error_log('repository actress item fetch failed: ' . $e->getMessage());
     }
 
     try {
@@ -67,6 +66,24 @@ function pca_detail_items(int $actressId, string $dmmId, string $name, int $limi
     } catch (Throwable $e) {
         error_log('actress raw item fetch failed: ' . $e->getMessage());
         return [];
+    }
+}
+
+function pca_detail_is_amateur(string $dmmId, string $name): bool
+{
+    try {
+        $stmt = db()->prepare(
+            "SELECT 1
+             FROM item_actresses ia
+             INNER JOIN items i ON i.id = ia.item_id
+             WHERE (ia.dmm_id = :dmm_id OR ia.actress_name = :name)
+               AND (i.floor_code = 'videoc' OR i.floor_name LIKE '%素人%' OR i.floor_name LIKE '%しろうと%' OR i.floor_name LIKE '%シロウト%')
+             LIMIT 1"
+        );
+        $stmt->execute([':dmm_id' => $dmmId, ':name' => $name]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable) {
+        return false;
     }
 }
 
@@ -111,17 +128,21 @@ $profile = [
     'blood_type' => '',
 ];
 
-$profileImage = pca_actress_image($row);
-if ($profileImage === '') {
-    $profileImage = pcf_placeholder_data_uri('No Photo');
-}
-
 $page = max(1, (int)get('page', 1));
 $limit = 24;
 $offset = ($page - 1) * $limit;
 $loaded = pca_detail_items($id, $dmmId, $name, $limit + 1, $offset);
 $loaded = dedupe_items_by_key($loaded);
 [$items, $hasNext] = paginate_items($loaded, $limit);
+
+$profileImage = pca_actress_image($row);
+$isAmateur = pca_detail_is_amateur($dmmId, $name);
+if ($profileImage === '' && $items !== []) {
+    $profileImage = pcf_item_image($items[0]);
+}
+if ($profileImage === '') {
+    $profileImage = pcf_placeholder_data_uri('No Photo');
+}
 
 $rankPeriod = trim((string)get('rank_period', 'daily'));
 $rankTabs = ['daily' => '本日', 'weekly' => '週間', 'monthly' => '月間', 'yearly' => '年間'];
@@ -149,7 +170,7 @@ require __DIR__ . '/partials/header.php';
 
 <?php pcf_render_breadcrumbs([
     ['label' => 'トップ', 'url' => public_url('')],
-    ['label' => '女優一覧', 'url' => public_url('actresses.php')],
+    ['label' => $isAmateur ? 'しろうと女性一覧' : '女優一覧', 'url' => public_url($isAmateur ? 'amateur_actresses.php' : 'actresses.php')],
     ['label' => $name],
 ]); ?>
 
@@ -211,7 +232,7 @@ require __DIR__ . '/partials/header.php';
     <?php if ($hasNext): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page + 1))) ?>">次へ</a><?php endif; ?>
   </nav>
 <?php else: ?>
-  <?php pcf_render_empty('この女優の作品はまだ同期されていません。cronまたは「今すぐ1回実行」で順番に取得されます。'); ?>
+  <?php pcf_render_empty('この女性に紐づく保存済み作品はまだありません。cronまたは「今すぐ1回実行」で取得対象になります。'); ?>
 <?php endif; ?>
 
 <section id="access-ranking" class="block" style="margin-top:24px;">
