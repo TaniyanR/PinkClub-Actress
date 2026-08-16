@@ -147,12 +147,11 @@ if (is_array($target)) {
     $offset = ($currentPage - 1) * $perPage;
 
     $selectExtra = $apiType === 'items' ? ', content_id' : ', dmm_id';
-    $stmt = db()->prepare(
-        'SELECT ' . $target['id_column'] . ' AS row_id, ' . $target['name_column'] . ' AS row_name, updated_at' . $selectExtra . '\n'
-        . 'FROM ' . $target['table'] . '\n'
-        . 'ORDER BY ' . $target['id_column'] . ' DESC\n'
-        . 'LIMIT :limit OFFSET :offset'
-    );
+    $sql = 'SELECT ' . $target['id_column'] . ' AS row_id, ' . $target['name_column'] . ' AS row_name, updated_at' . $selectExtra
+        . ' FROM ' . $target['table']
+        . ' ORDER BY ' . $target['id_column'] . ' DESC'
+        . ' LIMIT :limit OFFSET :offset';
+    $stmt = db()->prepare($sql);
     $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
     $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
     $stmt->execute();
