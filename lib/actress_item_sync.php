@@ -43,43 +43,96 @@ function pca_enrich_missing_actress_images(int $limit = 100): array
     return ['processed'=>$processed,'updated'=>$updated,'message'=>'女優画像を'.$processed.'人確認し、'.$updated.'人分を補完しました。'];
 }
 
+function pca_ensure_actress_item_sync_state_table(): void
+{
+    db()->exec("CREATE TABLE IF NOT EXISTS pca_actress_item_sync_state (
+        actress_dmm_id VARCHAR(64) PRIMARY KEY,
+        last_checked_at DATETIME NOT NULL,
+        last_api_count INT NOT NULL DEFAULT 0,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_pca_actress_item_checked (last_checked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
 /**
- * 保存済み女優のうち、作品がまだ1件も紐付いていない人を最優先する。
- * 未取得女優が残っている間はカーソルを使わず、必ず未取得の先頭を選ぶ。
- * 全員に作品確認済みとなった後だけカーソル巡回に戻す。
+ * 既存items.raw_jsonを正としてitem_actressesを100件ずつ修復する。
+ * 過去の誤った一括紐付けを消し、APIレスポンスに実在する出演者だけを再登録する。
+ */
+function pca_repair_item_actress_relations_batch(int $limit = 100): array
+{
+    $limit = max(1, min(100, $limit));
+    $pdo = db();
+    $cursor = max(0, (int)site_setting_get('pca_relation_repair_cursor', '0'));
+    $stmt = $pdo->prepare('SELECT id,raw_json FROM items WHERE id > :cursor ORDER BY id ASC LIMIT :limit');
+    $stmt->bindValue(':cursor', $cursor, PDO::PARAM_INT);
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if ($rows === []) {
+        $cursor = 0;
+        $stmt = $pdo->prepare('SELECT id,raw_json FROM items ORDER BY id ASC LIMIT :limit');
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    $processed = 0;
+    $relations = 0;
+    $lastId = $cursor;
+    foreach ($rows as $itemRow) {
+        $itemId = (int)($itemRow['id'] ?? 0);
+        $raw = json_decode((string)($itemRow['raw_json'] ?? ''), true);
+        if ($itemId <= 0 || !is_array($raw)) continue;
+        $normalized = DmmNormalizer::normalizeItemsResponse(['result'=>['items'=>[$raw]]]);
+        $item = $normalized[0] ?? null;
+        if (!is_array($item)) continue;
+        $performers = is_array($item['actresses'] ?? null) ? $item['actresses'] : [];
+
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare('DELETE FROM item_actresses WHERE item_id=?')->execute([$itemId]);
+            foreach ($performers as $performer) {
+                if (!is_array($performer)) continue;
+                $name = trim((string)($performer['name'] ?? ''));
+                if ($name === '') continue;
+                $dmmId = trim((string)($performer['id'] ?? ''));
+                if ($dmmId === '') $dmmId = 'name:' . sha1(mb_strtolower($name, 'UTF-8'));
+                $pdo->prepare('INSERT IGNORE INTO item_actresses(item_id,dmm_id,actress_name) VALUES(?,?,?)')->execute([$itemId,$dmmId,$name]);
+                $pdo->prepare('INSERT INTO actresses(dmm_id,name,updated_at) VALUES(?,?,NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),updated_at=NOW()')->execute([$dmmId,$name]);
+                $relations++;
+            }
+            $pdo->commit();
+            $processed++;
+            $lastId = max($lastId, $itemId);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('item actress relation repair failed for item '.$itemId.': '.$e->getMessage());
+        }
+    }
+    site_setting_set_many(['pca_relation_repair_cursor'=>(string)$lastId]);
+    return ['processed'=>$processed,'relations'=>$relations,'cursor'=>$lastId];
+}
+
+/**
+ * 保存済み女優を公平に巡回する。
+ * 「作品が0件の女優」を未取得扱いで永久ループしないよう、専用stateテーブルで確認済みを管理する。
  */
 function pca_sync_items_for_next_saved_actress(int $batch = 10): array
 {
     $batch = max(1, min(100, $batch));
     $pdo = db();
+    pca_ensure_actress_item_sync_state_table();
 
-    $unsyncedStmt = $pdo->query(
+    $stmt = $pdo->query(
         "SELECT a.id,a.dmm_id,a.name
          FROM actresses a
-         WHERE TRIM(COALESCE(a.name,''))<>''
-           AND a.dmm_id REGEXP '^[0-9]+$'
-           AND NOT EXISTS (
-             SELECT 1 FROM item_actresses ia
-             WHERE ia.dmm_id=a.dmm_id OR ia.actress_name=a.name
-           )
-         ORDER BY a.id ASC
+         LEFT JOIN pca_actress_item_sync_state s ON s.actress_dmm_id=a.dmm_id
+         WHERE TRIM(COALESCE(a.name,''))<>'' AND a.dmm_id REGEXP '^[0-9]+$'
+         ORDER BY (s.last_checked_at IS NULL) DESC, s.last_checked_at ASC, a.id ASC
          LIMIT 1"
     );
-    $actress = $unsyncedStmt ? $unsyncedStmt->fetch(PDO::FETCH_ASSOC) : false;
-
-    if (!$actress) {
-        $rows = $pdo->query(
-            "SELECT a.id,a.dmm_id,a.name
-             FROM actresses a
-             WHERE TRIM(COALESCE(a.name,''))<>'' AND a.dmm_id REGEXP '^[0-9]+$'
-             ORDER BY a.id ASC"
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        if ($rows === []) throw new RuntimeException('保存済み女優がありません。');
-        $cursor = max(0, (int)site_setting_get('actress_item_sync_cursor', '0'));
-        if ($cursor >= count($rows)) $cursor = 0;
-        $actress = $rows[$cursor];
-        site_setting_set_many(['actress_item_sync_cursor'=>(string)(($cursor + 1) % count($rows))]);
-    }
+    $actress = $stmt ? $stmt->fetch(PDO::FETCH_ASSOC) : false;
+    if (!$actress) throw new RuntimeException('保存済み女優がありません。');
 
     $actressId = (int)($actress['id'] ?? 0);
     $actressDmmId = trim((string)($actress['dmm_id'] ?? ''));
@@ -89,26 +142,23 @@ function pca_sync_items_for_next_saved_actress(int $batch = 10): array
     $offsetKey = 'actress_item_sync_offset.' . preg_replace('/[^a-z0-9_.-]+/i', '_', $actressDmmId . '.videoa');
     $offset = max(1, (int)site_setting_get($offsetKey, '1'));
     $beforeCount = (int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
-    $syncStartedAt = date('Y-m-d H:i:s');
     $result = dmm_sync_service('items')->syncItemsBatch('FANZA','digital','videoa',$batch,$offset,[
         'sort'=>'rank','article'=>'actress','article_id'=>$actressDmmId,
     ]);
 
-    try {
-        $link = $pdo->prepare("INSERT IGNORE INTO item_actresses (item_id,dmm_id,actress_name)
-            SELECT id,:dmm_id,:name FROM items WHERE floor_code='videoa' AND updated_at>=:started_at");
-        $link->execute([':dmm_id'=>$actressDmmId,':name'=>$actressName,':started_at'=>$syncStartedAt]);
-    } catch (Throwable $e) {
-        error_log('explicit actress item relation failed: ' . $e->getMessage());
-    }
-
+    // relationはDmmSyncService::rebuildItemRelations()がAPIレスポンスから正確に作る。
+    // ここでupdated_at基準の一括紐付けは絶対に行わない。
     $count = (int)($result['api_count'] ?? $result['synced_count'] ?? 0);
+    $pdo->prepare("INSERT INTO pca_actress_item_sync_state(actress_dmm_id,last_checked_at,last_api_count,updated_at)
+        VALUES(:id,NOW(),:cnt,NOW()) ON DUPLICATE KEY UPDATE last_checked_at=NOW(),last_api_count=VALUES(last_api_count),updated_at=NOW()")
+        ->execute([':id'=>$actressDmmId,':cnt'=>$count]);
+
     site_setting_set_many([$offsetKey=>(string)max(1,(int)($result['next_offset'] ?? 1))]);
     $afterCount = (int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
     return [
         'actress_id'=>$actressId,'actress_dmm_id'=>$actressDmmId,'actress_name'=>$actressName,
         'synced_count'=>$count,'new_count'=>max(0,$afterCount-$beforeCount),'total_items'=>$afterCount,
-        'message'=>$actressName.' の作品を取得しました（'.$count.'件）。',
+        'message'=>$actressName.' の作品を取得しました（API '.$count.'件）。',
     ];
 }
 
@@ -127,11 +177,6 @@ function pca_sync_items_for_saved_actresses(int $actressCount = 100, int $batchP
     return ['processed_actresses'=>$processed,'synced_count'=>$synced,'new_count'=>$new,'total_items'=>$totalItems,'message'=>$processed.'人分の作品を取得しました。'];
 }
 
-/**
- * 女優APIに存在しないしろうと女性を発見するため、videocフロアを直接100作品ずつ巡回する。
- * DmmNormalizer側で、videocにactress情報が無い場合はPinkClub-Shirotoと同じく作品タイトルを
- * 女性名として補完するため、保存後のitem_actressesから人物マスタへ登録できる。
- */
 function pca_sync_amateur_floor_batch(int $batch = 100): array
 {
     $batch = max(1, min(100, $batch));
