@@ -184,21 +184,24 @@ class DmmSyncService
             $requestParams = array_merge($extraParams, ['hits' => $hitLimit, 'offset' => $requestOffset]);
             $response = $this->client->fetchItems($siteCode, $serviceCode, $floorCode, $requestParams);
             $fetchedItems = DmmNormalizer::normalizeItemsResponse($response);
-            // 女優APIに登録済みの女優が出演する作品だけを保存対象にする。
-            $fetchedItems = array_values(array_filter(
-                $fetchedItems,
-                fn(array $item): bool => $this->itemHasRegisteredActress($item)
-            ));
-            $fetchedCount = count($fetchedItems);
-            $apiCount += $fetchedCount;
-            $checkedCount += $fetchedCount;
-            if ($fetchedCount === 0) {
+            $rawFetchedCount = count($fetchedItems);
+            $apiCount += $rawFetchedCount;
+            $checkedCount += $rawFetchedCount;
+            if ($rawFetchedCount === 0) {
                 $reachedEnd = true;
                 if ($advancePastOffset) {
                     $nextOffset = 1;
                 }
                 return 0;
             }
+
+            // 女優APIに登録済みの女優が出演する作品だけを保存対象にする。
+            // APIページング自体はフィルタ前の件数で進め、対象外作品が多くても途中終了しない。
+            $fetchedItems = array_values(array_filter(
+                $fetchedItems,
+                fn(array $item): bool => $this->itemHasRegisteredActress($item)
+            ));
+            $fetchedCount = count($fetchedItems);
 
             $processedCount = 0;
             $saveItems = [];
@@ -248,14 +251,14 @@ class DmmSyncService
             }
 
             if ($advancePastOffset) {
-                $nextOffset = $this->normalizeItemListOffset($requestOffset + $processedCount);
-                if ($fetchedCount < $hitLimit) {
+                $nextOffset = $this->normalizeItemListOffset($requestOffset + $rawFetchedCount);
+                if ($rawFetchedCount < $hitLimit) {
                     $nextOffset = 1;
                     $reachedEnd = true;
                 }
             }
 
-            return $fetchedCount;
+            return $rawFetchedCount;
         };
 
         $fetchAndSave(1, false);
