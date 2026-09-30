@@ -1142,6 +1142,13 @@ function upsert_actress(array $actress): string
         ':ruby'        => $actress['ruby']        ?? null,
         ':birthday'    => $actress['birthday']    ?? null,
         ':prefectures' => $actress['prefectures'] ?? null,
+        ':hobby'       => $actress['hobby']       ?? null,
+        ':bust'        => $actress['bust']        ?? null,
+        ':cup'         => $actress['cup']         ?? null,
+        ':waist'       => $actress['waist']       ?? null,
+        ':hip'         => $actress['hip']         ?? null,
+        ':height'      => $actress['height']      ?? null,
+        ':blood_type'  => $actress['blood_type']  ?? null,
         ':image_url'   => $actress['image_url']   ?? null,
         ':image_small' => $actress['image_small'] ?? null,
         ':image_large' => $actress['image_large'] ?? null,
@@ -1154,6 +1161,13 @@ function upsert_actress(array $actress): string
                     ruby        = :ruby,
                     birthday    = :birthday,
                     prefectures = :prefectures,
+                    hobby       = :hobby,
+                    bust        = :bust,
+                    cup         = :cup,
+                    waist       = :waist,
+                    hip         = :hip,
+                    height      = :height,
+                    blood_type  = :blood_type,
                     image_url   = :image_url,
                     image_small = :image_small,
                     image_large = :image_large,
@@ -1165,10 +1179,10 @@ function upsert_actress(array $actress): string
     }
 
     $sql = 'INSERT INTO actresses
-            (dmm_id, name, ruby, birthday, prefectures,
+            (dmm_id, name, ruby, birthday, prefectures, hobby, bust, cup, waist, hip, height, blood_type,
              image_url, image_small, image_large, created_at, updated_at)
             VALUES
-            (:dmm_id, :name, :ruby, :birthday, :prefectures,
+            (:dmm_id, :name, :ruby, :birthday, :prefectures, :hobby, :bust, :cup, :waist, :hip, :height, :blood_type,
              :image_url, :image_small, :image_large, :created_at, :updated_at)';
     $stmt = $pdo->prepare($sql);
     $payload[':created_at'] = $now;
