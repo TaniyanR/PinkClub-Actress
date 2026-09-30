@@ -47,7 +47,7 @@ function pca_run_sync_cycle(): array
     $message = '女優 ' . $processedActresses . '件取得（新規 ' . $newActresses . '人） / '
         . '画像 ' . (int)($images['processed'] ?? 0) . '人確認・' . (int)($images['updated'] ?? 0) . '人補完 / '
         . '登録女優の通常作品 ' . (int)($floorItems['api_count'] ?? 0) . '件確認・新規 ' . (int)($floorItems['new_count'] ?? 0) . '件 / '
-        . '商品未紐付け女優 ' . (int)($normal['processed_actresses'] ?? 0) . '人を補完'
+        . '登録女優 ' . (int)($normal['processed_actresses'] ?? 0) . '人を補完'
         . '（API ' . (int)($normal['api_count'] ?? 0) . '件 / 保存 ' . (int)($normal['saved_items'] ?? 0) . '件 / 新規 ' . (int)($normal['new_items'] ?? 0) . '件 / 同名既存関係 ' . (int)($normal['copied_relations'] ?? 0) . '件補完 / 商品カード対象 '
         . (int)($normal['coverage_before'] ?? 0) . '人→' . (int)($normal['coverage_after'] ?? 0) . '人） / '
         . '登録女優に紐付かない既存作品 ' . $prunedItems . '件整理';
