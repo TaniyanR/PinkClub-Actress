@@ -14,95 +14,6 @@ function pca_detail_profile_value(array $row, string $key): string
     return $value !== '' ? $value : '未登録';
 }
 
-/**
- * 通常女優の商品取得。
- *
- * まず現在のDMM女優IDで直接取得する。
- * 0件の場合だけ、女優APIと商品APIで同じ人物名なのにDMM IDが異なる既存データを
- * item_actresses.actress_name から軽量に救済する。
- * raw_json全件走査や全女優PHP走査は行わない。
- */
-function pca_detail_normal_items(string $dmmId, string $name, int $limit, int $offset): array
-{
-    $dmmId = trim($dmmId);
-    $name = trim($name);
-    $limit = max(1, min(100, $limit));
-    $offset = max(0, $offset);
-
-    try {
-        if ($dmmId !== '') {
-            $stmt = db()->prepare(
-                "SELECT DISTINCT i.*
-                 FROM items i
-                 INNER JOIN item_actresses ia ON ia.item_id = i.id
-                 WHERE ia.dmm_id = :dmm_id
-                   AND i.floor_code = 'videoa'
-                 ORDER BY i.release_date DESC, i.id DESC
-                 LIMIT {$limit} OFFSET {$offset}"
-            );
-            $stmt->execute([':dmm_id' => $dmmId]);
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            if ($rows !== []) {
-                return $rows;
-            }
-        }
-    } catch (Throwable $e) {
-        error_log('normal actress exact item fetch failed: ' . $e->getMessage());
-    }
-
-    if ($name === '') {
-        return [];
-    }
-
-    try {
-        $stmt = db()->prepare(
-            "SELECT DISTINCT i.*
-             FROM items i
-             INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE i.floor_code = 'videoa'
-               AND LOWER(REPLACE(REPLACE(TRIM(ia.actress_name), ' ', ''), '　', ''))
-                   = LOWER(REPLACE(REPLACE(TRIM(:actress_name), ' ', ''), '　', ''))
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT {$limit} OFFSET {$offset}"
-        );
-        $stmt->execute([':actress_name' => $name]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) {
-        error_log('normal actress name fallback item fetch failed: ' . $e->getMessage());
-        return [];
-    }
-}
-
-/**
- * しろうと女性だけは合成IDを使うため、videocの関係を直接取得する。
- */
-function pca_detail_amateur_items(string $dmmId, int $limit, int $offset): array
-{
-    $dmmId = trim($dmmId);
-    $limit = max(1, min(100, $limit));
-    $offset = max(0, $offset);
-    if ($dmmId === '') {
-        return [];
-    }
-
-    try {
-        $stmt = db()->prepare(
-            "SELECT DISTINCT i.*
-             FROM items i
-             INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE ia.dmm_id = :dmm_id
-               AND " . pca_amateur_item_sql('i') . "
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT {$limit} OFFSET {$offset}"
-        );
-        $stmt->execute([':dmm_id' => $dmmId]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) {
-        error_log('amateur actress item fetch failed: ' . $e->getMessage());
-        return [];
-    }
-}
-
 $id = max(0, (int)get('id', 0));
 if ($id <= 0) {
     require __DIR__ . '/404.php';
@@ -120,13 +31,9 @@ if (!is_array($row)) {
 
 $name = trim((string)($row['name'] ?? ''));
 $dmmId = trim((string)($row['dmm_id'] ?? ''));
-if ($name === '') {
+if ($name === '' || preg_match('/^[0-9]+$/', $dmmId) !== 1) {
     require __DIR__ . '/404.php';
 }
-
-// 通常女優としろうと女性はID形式で厳密に分離する。
-// 数値DMM女優IDを持つ人物を、同名やvideoc関係だけでしろうと扱いしない。
-$isAmateur = pca_is_synthetic_amateur_id($dmmId);
 
 try {
     analytics_log_actress_page_view($id);
@@ -134,28 +41,12 @@ try {
     error_log('actress page view logging failed: ' . $e->getMessage());
 }
 
-$profile = [
-    'name' => $name,
-    'ruby' => (string)($row['ruby'] ?? ''),
-    'birthday' => (string)($row['birthday'] ?? ''),
-    'prefectures' => (string)($row['prefectures'] ?? ''),
-    'hobby' => '',
-    'bust' => '',
-    'cup' => '',
-    'waist' => '',
-    'hip' => '',
-    'height' => '',
-    'blood_type' => '',
-];
-
 $page = max(1, (int)get('page', 1));
 $limit = 24;
 $offset = ($page - 1) * $limit;
 
 try {
-    $loaded = $isAmateur
-        ? pca_detail_amateur_items($dmmId, $limit + 1, $offset)
-        : pca_detail_normal_items($dmmId, $name, $limit + 1, $offset);
+    $loaded = fetch_items_by_actress($id, $limit + 1, $offset);
 } catch (Throwable $e) {
     error_log('actress item fetch failed: ' . $e->getMessage());
     $loaded = [];
@@ -165,9 +56,6 @@ $loaded = dedupe_items_by_key($loaded);
 [$items, $hasNext] = paginate_items($loaded, $limit);
 
 $profileImage = pca_actress_image($row);
-if ($isAmateur && $profileImage === '' && $items !== []) {
-    $profileImage = pcf_item_image($items[0]);
-}
 if ($profileImage === '') {
     $profileImage = pcf_placeholder_data_uri('No Photo');
 }
@@ -186,12 +74,13 @@ $ranking = array_values(array_filter(
     $ranking,
     static fn($candidate): bool => is_array($candidate)
         && (int)($candidate['id'] ?? 0) > 0
+        && preg_match('/^[0-9]+$/', trim((string)($candidate['dmm_id'] ?? ''))) === 1
         && trim((string)($candidate['name'] ?? '')) !== ''
 ));
 
 $title = $name;
 $pageTitle = $name;
-$pageDescription = $name . 'のプロフィールと出演作品。';
+$pageDescription = $name . 'のプロフィールとFANZA出演作品を紹介しています。';
 $canonicalUrl = public_url('actress.php?id=' . $id);
 $ogImage = $profileImage;
 require __DIR__ . '/partials/header.php';
@@ -199,7 +88,7 @@ require __DIR__ . '/partials/header.php';
 
 <?php pcf_render_breadcrumbs([
     ['label' => 'トップ', 'url' => public_url('')],
-    ['label' => $isAmateur ? 'しろうと女性一覧' : '女優一覧', 'url' => public_url($isAmateur ? 'amateur_actresses.php' : 'actresses.php')],
+    ['label' => '女優一覧', 'url' => public_url('actresses.php')],
     ['label' => $name],
 ]); ?>
 
@@ -208,47 +97,27 @@ require __DIR__ . '/partials/header.php';
 </style>
 
 <section class="pca-profile">
-  <img id="actress-profile-image" class="pca-profile__image" src="<?= e($profileImage) ?>" alt="<?= e($name) ?>" decoding="async" fetchpriority="high">
+  <img class="pca-profile__image" src="<?= e($profileImage) ?>" alt="<?= e($name) ?>" decoding="async" fetchpriority="high">
   <div>
     <h1><?= e($name) ?></h1>
     <div class="pca-profile__details">
       <dl class="pca-detail-list">
-        <div><dt>よみ</dt><dd data-actress-profile="ruby"><?= e(pca_detail_profile_value($profile, 'ruby')) ?></dd></div>
-        <div><dt>誕生日</dt><dd data-actress-profile="birthday"><?= e(pca_detail_profile_value($profile, 'birthday')) ?></dd></div>
-        <div><dt>出身地</dt><dd data-actress-profile="prefectures"><?= e(pca_detail_profile_value($profile, 'prefectures')) ?></dd></div>
-        <div><dt>趣味</dt><dd data-actress-profile="hobby"><?= e(pca_detail_profile_value($profile, 'hobby')) ?></dd></div>
+        <div><dt>よみ</dt><dd><?= e(pca_detail_profile_value($row, 'ruby')) ?></dd></div>
+        <div><dt>誕生日</dt><dd><?= e(pca_detail_profile_value($row, 'birthday')) ?></dd></div>
+        <div><dt>出身地</dt><dd><?= e(pca_detail_profile_value($row, 'prefectures')) ?></dd></div>
+        <div><dt>趣味</dt><dd><?= e(pca_detail_profile_value($row, 'hobby')) ?></dd></div>
       </dl>
       <dl class="pca-detail-list">
-        <div><dt>バスト</dt><dd data-actress-profile="bust"><?= e(pca_detail_profile_value($profile, 'bust')) ?></dd></div>
-        <div><dt>カップ</dt><dd data-actress-profile="cup"><?= e(pca_detail_profile_value($profile, 'cup')) ?></dd></div>
-        <div><dt>ウエスト</dt><dd data-actress-profile="waist"><?= e(pca_detail_profile_value($profile, 'waist')) ?></dd></div>
-        <div><dt>ヒップ</dt><dd data-actress-profile="hip"><?= e(pca_detail_profile_value($profile, 'hip')) ?></dd></div>
-        <div><dt>身長</dt><dd data-actress-profile="height"><?= e(pca_detail_profile_value($profile, 'height')) ?></dd></div>
-        <div><dt>血液型</dt><dd data-actress-profile="blood_type"><?= e(pca_detail_profile_value($profile, 'blood_type')) ?></dd></div>
+        <div><dt>バスト</dt><dd><?= e(pca_detail_profile_value($row, 'bust')) ?></dd></div>
+        <div><dt>カップ</dt><dd><?= e(pca_detail_profile_value($row, 'cup')) ?></dd></div>
+        <div><dt>ウエスト</dt><dd><?= e(pca_detail_profile_value($row, 'waist')) ?></dd></div>
+        <div><dt>ヒップ</dt><dd><?= e(pca_detail_profile_value($row, 'hip')) ?></dd></div>
+        <div><dt>身長</dt><dd><?= e(pca_detail_profile_value($row, 'height')) ?></dd></div>
+        <div><dt>血液型</dt><dd><?= e(pca_detail_profile_value($row, 'blood_type')) ?></dd></div>
       </dl>
     </div>
   </div>
 </section>
-
-<?php if (!$isAmateur): ?>
-<script>
-(() => {
-  const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-  fetch(endpoint, {credentials:'same-origin', headers:{'Accept':'application/json'}})
-    .then((response) => response.ok ? response.json() : null)
-    .then((data) => {
-      if (!data || !data.success || !data.display) return;
-      document.querySelectorAll('[data-actress-profile]').forEach((node) => {
-        const key = node.getAttribute('data-actress-profile');
-        if (key && Object.prototype.hasOwnProperty.call(data.display, key)) node.textContent = String(data.display[key] || '未登録');
-      });
-      const image = document.getElementById('actress-profile-image');
-      if (image && data.image_url) image.src = String(data.image_url);
-    })
-    .catch(() => {});
-})();
-</script>
-<?php endif; ?>
 
 <h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>
@@ -261,7 +130,7 @@ require __DIR__ . '/partials/header.php';
     <?php if ($hasNext): ?><a class="pcf-pagination__link" href="<?= e(public_url('actress.php?id=' . $id . '&page=' . ($page + 1))) ?>">次へ</a><?php endif; ?>
   </nav>
 <?php else: ?>
-  <?php pcf_render_empty('関連作品はまだありません。'); ?>
+  <?php pcf_render_empty('この女優の保存済み作品はまだありません。自動取得で順次追加されます。'); ?>
 <?php endif; ?>
 
 <section id="access-ranking" class="block" style="margin-top:24px;">
@@ -280,7 +149,7 @@ require __DIR__ . '/partials/header.php';
         $rankImage = pca_actress_image($rankRow);
         if ($rankImage === '') $rankImage = pcf_placeholder_data_uri('No Photo');
         ?>
-        <a href="<?= e(public_url('actress.php?id=' . $rankId)) ?>"><img src="<?= e($rankImage) ?>" alt="<?= e($rankName) ?>" loading="lazy"><span><?= e($rankName) ?></span></a>
+        <a href="<?= e(public_url('actress.php?id=' . $rankId)) ?>"><img src="<?= e($rankImage) ?>" alt="<?= e($rankName) ?>" loading="lazy" decoding="async"><span><?= e($rankName) ?></span></a>
       <?php endforeach; ?>
     </div>
   <?php else: ?>
