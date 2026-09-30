@@ -52,13 +52,13 @@ $lastRunAt = site_setting_get('pca_sync_last_run_at', '未実行');
 $lastMessage = site_setting_get('pca_sync_last_message', '');
 try {
     $pdo = db();
-    $totalActresses = (int)$pdo->query("SELECT COUNT(*) FROM actresses WHERE dmm_id REGEXP '^[0-9]+
+    $totalActresses = (int)$pdo->query("SELECT COUNT(*) FROM actresses WHERE dmm_id REGEXP '^[0-9]+$' AND TRIM(COALESCE(name,''))<>''")->fetchColumn();
     $totalItems = (int)$pdo->query('SELECT COUNT(*) FROM items')->fetchColumn();
     $totalImages = (int)$pdo->query("SELECT COUNT(*) FROM actresses WHERE COALESCE(image_large,'')<>'' OR COALESCE(image_small,'')<>'' OR COALESCE(image_url,'')<>''")->fetchColumn();
     $linkedActresses = pca_product_coverage_count_linked_actresses();
     pca_product_coverage_ensure_state_table();
     $checkedActresses = (int)$pdo->query('SELECT COUNT(*) FROM actress_product_sync_state')->fetchColumn();
-    $savedRows = $pdo->query("SELECT id,name,dmm_id,updated_at FROM actresses WHERE dmm_id REGEXP '^[0-9]+
+    $savedRows = $pdo->query("SELECT id,name,dmm_id,updated_at FROM actresses WHERE dmm_id REGEXP '^[0-9]+$' AND TRIM(COALESCE(name,''))<>'' ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable) {
 }
 
