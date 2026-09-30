@@ -26,7 +26,7 @@ $defaultFixedPages = [
 ];
 
 try {
-    $sitePostCount = (int)db()->query("SELECT COUNT(*) FROM items i WHERE EXISTS (SELECT 1 FROM item_actresses ia INNER JOIN actresses a ON a.dmm_id=ia.dmm_id WHERE ia.item_id=i.id AND a.dmm_id REGEXP '^[0-9]+
+    $sitePostCount = (int)db()->query("SELECT COUNT(*) FROM items i WHERE EXISTS (SELECT 1 FROM item_actresses ia INNER JOIN actresses a ON a.dmm_id=ia.dmm_id WHERE ia.item_id=i.id AND a.dmm_id REGEXP '^[0-9]+$')")->fetchColumn();
 } catch (Throwable) {
     $sitePostCount = null;
 }
