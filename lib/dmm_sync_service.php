@@ -627,6 +627,26 @@ class DmmSyncService
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS item_actors (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id INT UNSIGNED NOT NULL,dmm_id VARCHAR(64) NULL,actor_name VARCHAR(255) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_item_actor (item_id,dmm_id),CONSTRAINT fk_item_actor_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS sync_job_state (job_key VARCHAR(64) PRIMARY KEY,next_offset INT NOT NULL DEFAULT 1,next_initial VARCHAR(10) NULL,last_run_at DATETIME NULL,last_success TINYINT(1) NOT NULL DEFAULT 0,last_message TEXT NULL,lock_until DATETIME NULL,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
+        $actressColumns = [];
+        $actressStmt = $this->pdo->query('SHOW COLUMNS FROM actresses');
+        foreach (($actressStmt ? $actressStmt->fetchAll(PDO::FETCH_ASSOC) : []) as $col) {
+            $actressColumns[(string)($col['Field'] ?? '')] = true;
+        }
+        $actressProfileColumns = [
+            'hobby' => 'VARCHAR(255) NULL',
+            'bust' => 'VARCHAR(32) NULL',
+            'cup' => 'VARCHAR(32) NULL',
+            'waist' => 'VARCHAR(32) NULL',
+            'hip' => 'VARCHAR(32) NULL',
+            'height' => 'VARCHAR(32) NULL',
+            'blood_type' => 'VARCHAR(32) NULL',
+        ];
+        foreach ($actressProfileColumns as $column => $definition) {
+            if (!isset($actressColumns[$column])) {
+                $this->pdo->exec("ALTER TABLE actresses ADD COLUMN {$column} {$definition}");
+            }
+        }
+
         $itemColumns = [];
         $itemStmt = $this->pdo->query('SHOW COLUMNS FROM items');
         foreach (($itemStmt ? $itemStmt->fetchAll(PDO::FETCH_ASSOC) : []) as $col) {
