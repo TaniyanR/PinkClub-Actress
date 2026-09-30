@@ -82,7 +82,6 @@ if (!function_exists('pcf_looks_like_image_url')) {
     }
 }
 
-
 if (!function_exists('pcf_is_self_hosted_fanza_image_url')) {
     function pcf_is_self_hosted_fanza_image_url(string $url): bool
     {
@@ -233,14 +232,20 @@ if (!function_exists('pcf_item_image')) {
 
         foreach ($candidates as $candidate) {
             $value = trim($candidate);
-            if ($value !== '' && !pcf_is_self_hosted_fanza_image_url($value)) {
+            if ($value !== ''
+                && pcf_looks_like_image_url($value)
+                && !pcf_is_self_hosted_fanza_image_url($value)
+            ) {
                 return $value;
             }
         }
 
         foreach (pcf_parse_image_urls((string)($item['image_list'] ?? '')) as $image) {
             $value = trim((string)$image);
-            if ($value !== '' && !pcf_is_self_hosted_fanza_image_url($value)) {
+            if ($value !== ''
+                && pcf_looks_like_image_url($value)
+                && !pcf_is_self_hosted_fanza_image_url($value)
+            ) {
                 return $value;
             }
         }
@@ -389,6 +394,8 @@ if (!function_exists('pcf_pick_sample_image_urls_from_raw')) {
                     break;
                 }
             }
+        } else {
+            pcf_collect_sample_image_urls_from_value($sampleImageURL, $images);
         }
 
         return array_values(array_unique(array_filter(array_map(static fn($u) => trim((string)$u), $images))));
@@ -608,20 +615,16 @@ if (!function_exists('pcf_render_item_card')) {
 
         $sampleImagesUrl = public_url('sample_images.php?content_id=' . rawurlencode($contentId));
         $hasSampleImages = pcf_pick_sample_image_urls_from_raw($raw) !== [];
-        if (!$hasSampleImages) {
-            foreach (pcf_parse_image_urls((string)($item['image_list'] ?? '')) as $image) {
-                $sampleImageCandidate = trim((string)$image);
-                if ($sampleImageCandidate !== '' && !pcf_is_self_hosted_fanza_image_url($sampleImageCandidate)) {
-                    $hasSampleImages = true;
-                    break;
-                }
-            }
+        $affiliateUrl = trim((string)($item['affiliate_url'] ?? ''));
+        if ($affiliateUrl === '') {
+            $affiliateUrl = trim((string)($raw['affiliateURL'] ?? $raw['affiliate_url'] ?? ''));
         }
+        $isVrItem = preg_match('/(?:【|\[|［)?\s*VR\s*(?:】|\]|］)?/i', $title) === 1;
 
         echo '<article class="pcf-dm-card">';
         echo '<a class="pcf-dm-card__image-link" href="' . e($itemUrl) . '">';
         if ($imageUrl !== '') {
-            echo '<img class="pcf-dm-card__image" src="' . e($imageUrl) . '" alt="' . e($title) . '" loading="lazy">';
+            echo '<img class="pcf-dm-card__image" src="' . e($imageUrl) . '" alt="' . e($title) . '" width="240" height="170" loading="lazy" decoding="async">';
         } else {
             echo '<div class="pcf-dm-card__no-image">No Image</div>';
         }
@@ -631,13 +634,15 @@ if (!function_exists('pcf_render_item_card')) {
         $releaseDateRaw = trim((string)($item['release_date'] ?? ''));
         $releaseDateLabel = $releaseDateRaw !== '' ? '発売日：' . e(format_date($releaseDateRaw)) : '発売日';
         echo '<span style="display:block;width:100%;padding:12px 10px;text-align:center;color:#000;background:transparent;border:1px solid #000;border-radius:4px;font-size:14px;font-weight:700;box-sizing:border-box;">' . $releaseDateLabel . '</span>';
-        if ($sampleMovieUrl !== '') {
+        if ($isVrItem && $itemId > 0 && $affiliateUrl !== '') {
+            echo '<a class="pcf-dm-card__button sample-button--enabled" href="' . e(public_url('vr_affiliate.php?id=' . $itemId)) . '" target="_blank" rel="noopener sponsored nofollow">元サイトで見る</a>';
+        } elseif ($sampleMovieUrl !== '') {
             echo '<button type="button" class="pcf-dm-card__button sample-movie-trigger" data-movie-url="' . e($sampleMovieUrl) . '" data-movie-title="' . e($title) . '">サンプル動画</button>';
         } else {
             echo '<span class="pcf-dm-card__button is-disabled">サンプル動画</span>';
         }
         if ($hasSampleImages && $contentId !== '') {
-            echo '<button type="button" class="pcf-dm-card__button" onclick="window.open(\'' . e($sampleImagesUrl) . '\',\'_blank\',\'noopener,noreferrer,width=760,height=540\');">サンプル画像</button>';
+            echo '<button type="button" class="pcf-dm-card__button sample-image-trigger" data-sample-images-url="' . e($sampleImagesUrl) . '" data-sample-images-title="' . e($title) . '">サンプル画像</button>';
         } else {
             echo '<span class="pcf-dm-card__button is-disabled">サンプル画像</span>';
         }
@@ -664,6 +669,72 @@ if (!function_exists('pcf_render_taxonomy_card')) {
         }
         echo '<p><a class="pcf-btn" href="' . e($url) . '">詳細を見る</a></p>';
         echo '</article>';
+    }
+}
+
+if (!function_exists('pcf_render_item_access_ranking')) {
+    function pcf_render_item_access_ranking(
+        array $tabs,
+        string $activePeriod,
+        callable $tabUrlBuilder,
+        array $rows,
+        callable $rowUrlBuilder,
+        string $emptyMessage = '人気の作品ランキングのデータがありません。'
+    ): void {
+        $displayRows = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $title = trim((string)($row['title'] ?? ''));
+            $url = trim((string)$rowUrlBuilder($row));
+            if ($title === '' || $url === '') {
+                continue;
+            }
+            $displayRows[] = [
+                'title' => $title,
+                'url' => $url,
+                'page_views' => max(0, (int)($row['page_view_count'] ?? 0)),
+                'out_clicks' => max(0, (int)($row['out_click_count'] ?? 0)),
+                'score' => max(0, (int)($row['access_count'] ?? 0)),
+            ];
+        }
+
+        echo '<section id="access-ranking" class="block pcf-item-ranking">';
+        echo '<div class="pcf-item-ranking__heading"><div>';
+        echo '<p class="pcf-item-ranking__eyebrow">ACCESS RANKING</p>';
+        echo '<h2 class="section-title">人気の作品ランキング</h2>';
+        echo '</div><p class="pcf-item-ranking__description">閲覧数と元サイトへのアクセスをもとに集計しています。</p></div>';
+        echo '<nav class="pcf-item-ranking__tabs" aria-label="ランキング期間">';
+        foreach ($tabs as $tabKey => $tabConfig) {
+            $period = (string)$tabKey;
+            $label = is_array($tabConfig) ? trim((string)($tabConfig['label'] ?? '')) : '';
+            $url = trim((string)$tabUrlBuilder($period));
+            if ($label === '' || $url === '') {
+                continue;
+            }
+            $isActive = $activePeriod === $period;
+            echo '<a href="' . e($url) . '" rel="nofollow" class="pcf-item-ranking__tab' . ($isActive ? ' is-active' : '') . '"' . ($isActive ? ' aria-current="page"' : '') . '>' . e($label) . '</a>';
+        }
+        echo '</nav>';
+
+        if ($displayRows === []) {
+            pcf_render_empty($emptyMessage);
+        } else {
+            echo '<ol class="pcf-item-ranking__list">';
+            foreach ($displayRows as $index => $row) {
+                echo '<li class="pcf-item-ranking__row' . ($index < 3 ? ' is-top' : '') . '">';
+                echo '<span class="pcf-item-ranking__position">' . e((string)($index + 1)) . '</span>';
+                echo '<a class="pcf-item-ranking__title" href="' . e((string)$row['url']) . '">' . e((string)$row['title']) . '</a>';
+                echo '<span class="pcf-item-ranking__metrics">';
+                echo '<span>閲覧 ' . e((string)$row['page_views']) . '</span>';
+                echo '<span>移動 ' . e((string)$row['out_clicks']) . '</span>';
+                echo '<strong>' . e((string)$row['score']) . ' pt</strong>';
+                echo '</span></li>';
+            }
+            echo '</ol>';
+        }
+        echo '</section>';
     }
 }
 
