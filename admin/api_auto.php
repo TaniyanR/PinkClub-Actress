@@ -43,7 +43,8 @@ require __DIR__ . '/includes/header.php';
   <?php endif; ?>
 
   <p>cronの1サイクルは手動の「今すぐ1回実行」と同じです。</p>
-  <p><strong>女優情報100件 → 女優画像100人分補完 → 保存済み女優100人分の作品取得</strong></p>
+  <p><strong>女優情報100件 → プロフィール不足10人を補完 → 登録済み女優5人×最大20作品を取得</strong></p>
+  <p>作品は女優情報APIで登録済みの女優に紐づくものだけを保存・公開します。</p>
 
   <form method="post" class="stack" style="max-width:760px;">
     <?= csrf_input() ?>
