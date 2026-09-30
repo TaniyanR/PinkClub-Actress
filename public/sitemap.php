@@ -73,7 +73,6 @@ $actressWhere = "dmm_id REGEXP '^[0-9]+$'"
 
 $tables = [
     ['actresses', 'actress.php', 'weekly', '0.9', $actressWhere],
-    ['items', 'item.php', 'weekly', '0.8', items_product_source_where()],
 ];
 
 $totalUrls = count($staticUrls);
