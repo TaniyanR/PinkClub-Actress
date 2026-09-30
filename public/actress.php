@@ -138,13 +138,13 @@ $profile = [
     'ruby' => (string)($row['ruby'] ?? ''),
     'birthday' => (string)($row['birthday'] ?? ''),
     'prefectures' => (string)($row['prefectures'] ?? ''),
-    'hobby' => '',
-    'bust' => '',
-    'cup' => '',
-    'waist' => '',
-    'hip' => '',
-    'height' => '',
-    'blood_type' => '',
+    'hobby' => (string)($row['hobby'] ?? ''),
+    'bust' => (string)($row['bust'] ?? ''),
+    'cup' => (string)($row['cup'] ?? ''),
+    'waist' => (string)($row['waist'] ?? ''),
+    'hip' => (string)($row['hip'] ?? ''),
+    'height' => (string)($row['height'] ?? ''),
+    'blood_type' => (string)($row['blood_type'] ?? ''),
 ];
 
 $page = max(1, (int)get('page', 1));
@@ -227,25 +227,7 @@ require __DIR__ . '/partials/header.php';
   </div>
 </section>
 
-<?php if (!$isAmateur): ?>
-<script>
-(() => {
-  const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-  fetch(endpoint, {credentials:'same-origin', headers:{'Accept':'application/json'}})
-    .then((response) => response.ok ? response.json() : null)
-    .then((data) => {
-      if (!data || !data.success || !data.display) return;
-      document.querySelectorAll('[data-actress-profile]').forEach((node) => {
-        const key = node.getAttribute('data-actress-profile');
-        if (key && Object.prototype.hasOwnProperty.call(data.display, key)) node.textContent = String(data.display[key] || '未登録');
-      });
-      const image = document.getElementById('actress-profile-image');
-      if (image && data.image_url) image.src = String(data.image_url);
-    })
-    .catch(() => {});
-})();
-</script>
-<?php endif; ?>
+
 
 <h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>
