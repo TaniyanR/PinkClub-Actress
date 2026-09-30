@@ -14,7 +14,6 @@ function app_config(): array
 
     return $GLOBALS['app_config'];
 }
-
 function url_path(string $path): string
 {
     return rtrim(BASE_URL, '/') . $path;

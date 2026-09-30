@@ -17,7 +17,7 @@ function pcf_crawler_guard_request_path(): string
 
 function pcf_crawler_guard_is_public_heavy_path(string $path): bool
 {
-    return preg_match('#/(?:public/)?(?:item|actress|genre|maker|label|series_detail)\.php$#', $path) === 1;
+    return preg_match('#/(?:public/)?item\.php$#', $path) === 1;
 }
 
 function pcf_crawler_guard_is_known_crawler(string $userAgent): bool
@@ -26,7 +26,7 @@ function pcf_crawler_guard_is_known_crawler(string $userAgent): bool
         return false;
     }
 
-    return preg_match('/(?:Applebot|GPTBot|Googlebot|bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|facebookexternalhit|Twitterbot|AhrefsBot|SemrushBot|MJ12bot|DotBot|PetalBot|Bytespider|ClaudeBot|Amazonbot|CensysInspect|DataForSeoBot)/i', $userAgent) === 1;
+    return preg_match('/(?:Applebot|GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|PerplexityBot|Perplexity-User|Googlebot|Google-Extended|bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|facebookexternalhit|meta-externalagent|Twitterbot|AhrefsBot|SemrushBot|MJ12bot|DotBot|PetalBot|Bytespider|Amazonbot|CCBot|cohere-ai|Diffbot|CensysInspect|DataForSeoBot)/i', $userAgent) === 1;
 }
 
 function pcf_crawler_guard_redirect_rank_period_crawler(string $path): void
@@ -79,8 +79,7 @@ function pcf_crawler_guard_check(): void
         rate_limit_check('public_rank_period_' . basename($path), 20, 60);
     }
 
-    // Do not throttle normal crawler requests here. Google can legitimately
-    // fetch many detail URLs from one address in a short period, and returning
-    // 429/overload responses makes healthy pages appear as server errors in
-    // Search Console. Expensive rank-period variants are handled above.
+    // Do not throttle ordinary crawler requests. Search engines legitimately
+    // crawl many product URLs from one address; returning 429 responses makes
+    // healthy pages look like server errors in Search Console.
 }

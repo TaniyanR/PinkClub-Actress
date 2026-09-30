@@ -30,24 +30,19 @@ function pcf_session_is_required(): bool
 
     $scriptName = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
     $requestPath = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
-    $sessionName = session_name();
-    $hasSessionCookie = $sessionName !== '' && isset($_COOKIE[$sessionName]);
 
-    if (
-        !str_contains($requestPath, '/admin/')
-        && in_array($scriptName, ['analytics.php', 'ranking_refresh.php'], true)
-    ) {
-        return false;
-    }
-    if (
-        !str_contains($requestPath, '/admin/')
-        && $scriptName === 'page_view_beacon.php'
-        && !$hasSessionCookie
-    ) {
-        return false;
-    }
-    if ($hasSessionCookie) {
+    $sessionName = session_name();
+    if ($sessionName !== '' && isset($_COOKIE[$sessionName])) {
         return true;
+    }
+
+    if (!str_contains($requestPath, '/admin/') && in_array($scriptName, [
+        'analytics.php',
+        'analytics_engagement.php',
+        'page_view_beacon.php',
+        'ranking_refresh.php',
+    ], true)) {
+        return false;
     }
 
     $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -70,6 +65,9 @@ function pcf_session_is_required(): bool
 if (session_status() !== PHP_SESSION_ACTIVE) {
     $sessionLifetime = (int)($config['security']['session_lifetime'] ?? 86400);
     ini_set('session.gc_maxlifetime', (string)$sessionLifetime);
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.use_trans_sid', '0');
     session_name($config['security']['session_name'] ?? 'pinkclub_fanza_session');
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
@@ -95,11 +93,32 @@ if (!headers_sent()) {
     header('X-Frame-Options: SAMEORIGIN');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+
+    $headerHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+    if ($headerHttps) {
+        header('Strict-Transport-Security: max-age=31536000');
+    }
+
+    $requestPath = (string)(parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
+    $scriptName = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    if (str_contains($requestPath, '/admin/') || in_array($scriptName, [
+        'login0718.php',
+        'forgot_password.php',
+        'reset_password.php',
+        'setup_check.php',
+    ], true)) {
+        header('X-Robots-Tag: noindex, nofollow', true);
+    }
 }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/csrf.php';
 require_once __DIR__ . '/installer.php';
+require_once __DIR__ . '/setup_guard.php';
+if (function_exists('setup_guard_bootstrap_installed_marker')) {
+    setup_guard_bootstrap_installed_marker();
+}
 require_once __DIR__ . '/paginator.php';
 require_once __DIR__ . '/app.php';

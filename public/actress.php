@@ -22,55 +22,15 @@ function pca_detail_profile_value(array $row, string $key): string
  * item_actresses.actress_name から軽量に救済する。
  * raw_json全件走査や全女優PHP走査は行わない。
  */
-function pca_detail_normal_items(string $dmmId, string $name, int $limit, int $offset): array
+function pca_detail_normal_items(int $actressId, int $limit, int $offset): array
 {
-    $dmmId = trim($dmmId);
-    $name = trim($name);
+    $actressId = max(1, $actressId);
     $limit = max(1, min(100, $limit));
     $offset = max(0, $offset);
 
-    try {
-        if ($dmmId !== '') {
-            $stmt = db()->prepare(
-                "SELECT DISTINCT i.*
-                 FROM items i
-                 INNER JOIN item_actresses ia ON ia.item_id = i.id
-                 WHERE ia.dmm_id = :dmm_id
-                   AND i.floor_code = 'videoa'
-                 ORDER BY i.release_date DESC, i.id DESC
-                 LIMIT {$limit} OFFSET {$offset}"
-            );
-            $stmt->execute([':dmm_id' => $dmmId]);
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            if ($rows !== []) {
-                return $rows;
-            }
-        }
-    } catch (Throwable $e) {
-        error_log('normal actress exact item fetch failed: ' . $e->getMessage());
-    }
-
-    if ($name === '') {
-        return [];
-    }
-
-    try {
-        $stmt = db()->prepare(
-            "SELECT DISTINCT i.*
-             FROM items i
-             INNER JOIN item_actresses ia ON ia.item_id = i.id
-             WHERE i.floor_code = 'videoa'
-               AND LOWER(REPLACE(REPLACE(TRIM(ia.actress_name), ' ', ''), '　', ''))
-                   = LOWER(REPLACE(REPLACE(TRIM(:actress_name), ' ', ''), '　', ''))
-             ORDER BY i.release_date DESC, i.id DESC
-             LIMIT {$limit} OFFSET {$offset}"
-        );
-        $stmt->execute([':actress_name' => $name]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) {
-        error_log('normal actress name fallback item fetch failed: ' . $e->getMessage());
-        return [];
-    }
+    // PinkClub-FANZA と同じ actress.id -> actresses.dmm_id -> item_actresses.dmm_id -> items.id の経路。
+    // 公開ページでは外部APIや全件同名検索を行わない。
+    return fetch_items_by_actress($actressId, $limit, $offset);
 }
 
 /**
@@ -120,13 +80,12 @@ if (!is_array($row)) {
 
 $name = trim((string)($row['name'] ?? ''));
 $dmmId = trim((string)($row['dmm_id'] ?? ''));
-if ($name === '') {
+if ($name === '' || preg_match('/^[0-9]+$/', $dmmId) !== 1) {
     require __DIR__ . '/404.php';
 }
 
-// 通常女優としろうと女性はID形式で厳密に分離する。
-// 数値DMM女優IDを持つ人物を、同名やvideoc関係だけでしろうと扱いしない。
-$isAmateur = pca_is_synthetic_amateur_id($dmmId);
+// PinkClub-Actressの公開対象は女優情報APIで登録済みの通常女優だけ。
+$isAmateur = false;
 
 try {
     analytics_log_actress_page_view($id);
@@ -139,13 +98,13 @@ $profile = [
     'ruby' => (string)($row['ruby'] ?? ''),
     'birthday' => (string)($row['birthday'] ?? ''),
     'prefectures' => (string)($row['prefectures'] ?? ''),
-    'hobby' => '',
-    'bust' => '',
-    'cup' => '',
-    'waist' => '',
-    'hip' => '',
-    'height' => '',
-    'blood_type' => '',
+    'hobby' => (string)($row['hobby'] ?? ''),
+    'bust' => (string)($row['bust'] ?? ''),
+    'cup' => (string)($row['cup'] ?? ''),
+    'waist' => (string)($row['waist'] ?? ''),
+    'hip' => (string)($row['hip'] ?? ''),
+    'height' => (string)($row['height'] ?? ''),
+    'blood_type' => (string)($row['blood_type'] ?? ''),
 ];
 
 $page = max(1, (int)get('page', 1));
@@ -153,9 +112,7 @@ $limit = 24;
 $offset = ($page - 1) * $limit;
 
 try {
-    $loaded = $isAmateur
-        ? pca_detail_amateur_items($dmmId, $limit + 1, $offset)
-        : pca_detail_normal_items($dmmId, $name, $limit + 1, $offset);
+    $loaded = pca_detail_normal_items($id, $limit + 1, $offset);
 } catch (Throwable $e) {
     error_log('actress item fetch failed: ' . $e->getMessage());
     $loaded = [];
@@ -199,7 +156,7 @@ require __DIR__ . '/partials/header.php';
 
 <?php pcf_render_breadcrumbs([
     ['label' => 'トップ', 'url' => public_url('')],
-    ['label' => $isAmateur ? 'しろうと女性一覧' : '女優一覧', 'url' => public_url($isAmateur ? 'amateur_actresses.php' : 'actresses.php')],
+    ['label' => '女優一覧', 'url' => public_url('actresses.php')],
     ['label' => $name],
 ]); ?>
 
@@ -230,25 +187,7 @@ require __DIR__ . '/partials/header.php';
   </div>
 </section>
 
-<?php if (!$isAmateur): ?>
-<script>
-(() => {
-  const endpoint = <?= json_encode(public_url('actress_profile.php?id=' . $id), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-  fetch(endpoint, {credentials:'same-origin', headers:{'Accept':'application/json'}})
-    .then((response) => response.ok ? response.json() : null)
-    .then((data) => {
-      if (!data || !data.success || !data.display) return;
-      document.querySelectorAll('[data-actress-profile]').forEach((node) => {
-        const key = node.getAttribute('data-actress-profile');
-        if (key && Object.prototype.hasOwnProperty.call(data.display, key)) node.textContent = String(data.display[key] || '未登録');
-      });
-      const image = document.getElementById('actress-profile-image');
-      if (image && data.image_url) image.src = String(data.image_url);
-    })
-    .catch(() => {});
-})();
-</script>
-<?php endif; ?>
+
 
 <h2 class="pcf-section-title" style="margin:15px 0 12px;padding-bottom:10px;border-bottom:2px solid #d7dbe3;"><?= e($name) ?>の作品</h2>
 <?php if ($items !== []): ?>

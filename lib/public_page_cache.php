@@ -2,6 +2,23 @@
 
 declare(strict_types=1);
 
+function pcf_public_request_is_mobile(): bool
+{
+    static $isMobile = null;
+    if (is_bool($isMobile)) {
+        return $isMobile;
+    }
+
+    $viewportCookie = (string)($_COOKIE['pcf_viewport'] ?? '');
+    $clientHintMobile = (string)($_SERVER['HTTP_SEC_CH_UA_MOBILE'] ?? '');
+    $userAgent = (string)($_SERVER['HTTP_USER_AGENT'] ?? '');
+    $isMobile = $viewportCookie === 'sp'
+        || $clientHintMobile === '?1'
+        || ($userAgent !== '' && preg_match('/Android.*Mobile|iPhone|iPod|Windows Phone|BlackBerry|webOS/i', $userAgent) === 1);
+
+    return $isMobile;
+}
+
 function pcf_public_page_cache_start(int $ttlSeconds = 120): void
 {
     if (PHP_SAPI === 'cli' || headers_sent()) {
@@ -29,17 +46,36 @@ function pcf_public_page_cache_start(int $ttlSeconds = 120): void
         'ranking_refresh.php',
         'link_apply.php',
         'deletion_request_submit.php',
-        'page.php',
     ];
+    // The page cache stores HTML bodies only. Dynamic non-HTML endpoints must
+    // execute on every request so their Content-Type and freshness stay valid.
+    $cacheBypassScripts = [
+        'feed.php',
+        'feed-10.php',
+        'feed-60.php',
+        'feed-free-10.php',
+        'feed-free-60.php',
+        'rss.php',
+        'sample_images.php',
+        'social-image.php',
+        'indexnow-key.php',
+    ];
+    $pageSlug = trim((string)($_GET['slug'] ?? ''));
+    $isContactPage = $scriptName === 'page.php' && in_array($pageSlug, ['que', 'contact'], true);
+    $isExcludedScript = in_array($scriptName, $excludedScripts, true) || $isContactPage;
+    $mustBypassCache = in_array($scriptName, $cacheBypassScripts, true);
+    $isTrackedLinkVisit = $scriptName === 'links.php' && (int)($_GET['from'] ?? 0) > 0;
 
     if (
         str_contains($requestPath, '/admin/')
         || str_contains($requestPath, '/api/')
         || $scriptName === 'page_view_beacon.php'
-        || in_array($scriptName, $excludedScripts, true)
+        || $isExcludedScript
+        || $mustBypassCache
+        || $isTrackedLinkVisit
         || isset($_GET['pcf_nocache'])
     ) {
-        if (in_array($scriptName, $excludedScripts, true)) {
+        if ($isExcludedScript) {
             header('Cache-Control: private, no-store, max-age=0');
             header('Pragma: no-cache');
         }
@@ -55,19 +91,26 @@ function pcf_public_page_cache_start(int $ttlSeconds = 120): void
         return;
     }
 
-    $viewportCookie = (string)($_COOKIE['pcf_viewport'] ?? '');
-    $clientHintMobile = (string)($_SERVER['HTTP_SEC_CH_UA_MOBILE'] ?? '');
-    $userAgent = (string)($_SERVER['HTTP_USER_AGENT'] ?? '');
-    $isMobile = $viewportCookie === 'sp'
-        || $clientHintMobile === '?1'
-        || ($userAgent !== '' && preg_match('/Android.*Mobile|iPhone|iPod|Windows Phone|BlackBerry|webOS/i', $userAgent));
+    $baseParts = parse_url(defined('BASE_URL') ? (string)BASE_URL : '');
+    $cacheHost = is_array($baseParts) ? strtolower((string)($baseParts['host'] ?? '')) : '';
+    $cachePort = is_array($baseParts) && isset($baseParts['port']) ? (int)$baseParts['port'] : null;
+    if ($cacheHost === '') {
+        $cacheHost = 'pinkclub-fl.com';
+    }
+    $cacheAuthority = $cacheHost . ($cachePort !== null ? ':' . $cachePort : '');
 
-    $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
-    $variant = $isMobile ? 'sp' : 'pc';
+    $variant = pcf_public_request_is_mobile() ? 'sp' : 'pc';
+    $variant .= '|link-rel-v2|site-media-v1|analytics-v2|age-copyright-v1';
+    // A tombstone/restore action rotates this generation token so a cached
+    // product page cannot remain 200 after its search lifecycle changes.
+    $generationFile = dirname(__DIR__) . '/storage/cache/search-generation';
+    if (is_file($generationFile)) {
+        $variant .= '|' . (string)@file_get_contents($generationFile);
+    }
     $cacheQuery = [];
     parse_str((string)(parse_url($requestUri, PHP_URL_QUERY) ?? ''), $cacheQuery);
     $allowedCacheQueryKeys = [
-        'all', 'cid', 'content_id', 'fragment', 'group', 'id', 'ids', 'index',
+        'all', 'cid', 'content_id', 'format', 'fragment', 'group', 'id', 'ids', 'index',
         'limit', 'name', 'order', 'page', 'part', 'q', 'rank_period', 'slug', 'type',
     ];
     $numericCacheQueryLimits = ['id' => 2000000000, 'index' => 10000, 'limit' => 200, 'page' => 1000, 'part' => 1000];
@@ -101,9 +144,9 @@ function pcf_public_page_cache_start(int $ttlSeconds = 120): void
     if ($normalizedQuery !== '') {
         $normalizedRequestUri .= '?' . $normalizedQuery;
     }
-    $cacheKey = hash('sha256', 'v2|' . $host . '|' . $variant . '|' . $normalizedRequestUri);
+    $cacheGeneration = $scriptName === 'item.php' ? 'v10-social-card' : 'v9';
+    $cacheKey = hash('sha256', $cacheGeneration . '|' . $cacheAuthority . '|' . $variant . '|' . $normalizedRequestUri);
     $cacheFile = $cacheDirectory . '/' . $cacheKey . '.html';
-    // Sixteen lock shards prevent a cache stampede without creating one lock file per URL.
     $cacheLockFile = $cacheDirectory . '/.regenerate-' . substr($cacheKey, 0, 1) . '.lock';
 
     if (is_file($cacheFile) && (time() - (int)filemtime($cacheFile)) < $ttlSeconds) {
@@ -186,7 +229,6 @@ function pcf_public_page_cache_start(int $ttlSeconds = 120): void
                 $beaconScript = '<script>(()=>{try{const p=new URLSearchParams(location.search);const b=new URLSearchParams();for(const k of ["id","content_id","cid"]){const v=p.get(k);if(v)b.set(k,v);}if([...b].length){const u=' . json_encode($beaconUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . ';if(!(navigator.sendBeacon&&navigator.sendBeacon(u,b))&&window.fetch){fetch(u,{method:"POST",body:b,credentials:"same-origin",keepalive:true}).catch(()=>{});}}}catch(e){}})();</script>';
                 $content = str_replace('</body>', $beaconScript . '</body>', $content);
             }
-
             try {
                 $suffix = bin2hex(random_bytes(4));
             } catch (Throwable) {

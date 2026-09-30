@@ -59,7 +59,7 @@ if ($page > $pages) {
 $actresses = array_slice($allActresses, ($page - 1) * $perPage, $perPage);
 
 $title = $page > 1 ? '女優一覧 ' . $page . 'ページ目' : 'トップ';
-$pageDescription = 'FANZAの女優・しろうと女性を写真から探せる女優専門サイト。女優プロフィールと出演作品をチェックできます。';
+$pageDescription = 'FANZA女優を写真から探せる女優専門サイト。女優プロフィールと登録女優の出演作品をチェックできます。';
 $canonicalUrl = rtrim(BASE_URL, '/') . '/' . ($page > 1 ? '?page=' . $page : '');
 if ($page > 1) {
     $relPrev = rtrim(BASE_URL, '/') . '/' . ($page > 2 ? '?page=' . ($page - 1) : '');

@@ -133,6 +133,7 @@ function pcf_public_ranking_sql(string $type, string $scoreSql, int $limit): str
                 FROM (' . $scoreSql . ') scores
                 INNER JOIN ' . $relation . ' r ON r.item_id = scores.id
                 INNER JOIN ' . $master . ' m ON m.dmm_id = r.dmm_id
+                ' . ($type === 'actresses' ? "WHERE m.dmm_id REGEXP '^[0-9]+$'" : '') . '
                 GROUP BY m.id, m.dmm_id, m.name
                 ORDER BY access_count DESC, out_click_count DESC, m.id DESC
                 LIMIT ' . $limit;

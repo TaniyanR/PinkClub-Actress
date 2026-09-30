@@ -9,22 +9,11 @@ require_once __DIR__ . '/../lib/rate_limit.php';
 function deletion_request_destination_email(): string
 {
     $settingsEmail = setting_admin_email('');
-    if ($settingsEmail !== '' && filter_var($settingsEmail, FILTER_VALIDATE_EMAIL)) {
-        return $settingsEmail;
-    }
-
-    return '';
+    return $settingsEmail !== '' && filter_var($settingsEmail, FILTER_VALIDATE_EMAIL) ? $settingsEmail : '';
 }
 
-function deletion_request_send_mail(
-    string $to,
-    string $replyTo,
-    string $receipt,
-    string $textBody,
-    string $tmpPath,
-    string $mime,
-    string $extension
-): bool {
+function deletion_request_send_mail(string $to, string $replyTo, string $receipt, string $textBody, string $tmpPath, string $mime, string $extension): bool
+{
     $fileData = @file_get_contents($tmpPath);
     if (!is_string($fileData) || $fileData === '') {
         return false;
@@ -32,21 +21,16 @@ function deletion_request_send_mail(
 
     $boundary = '=_PCF_' . bin2hex(random_bytes(16));
     $subjectText = '【削除依頼】受付番号 ' . $receipt;
-    $subject = function_exists('mb_encode_mimeheader')
-        ? mb_encode_mimeheader($subjectText, 'UTF-8', 'B', "\r\n")
-        : $subjectText;
+    $subject = function_exists('mb_encode_mimeheader') ? mb_encode_mimeheader($subjectText, 'UTF-8', 'B', "\r\n") : $subjectText;
     $safeReplyTo = str_replace(["\r", "\n"], '', $replyTo);
     $attachmentName = 'identity-document-' . preg_replace('/[^A-Za-z0-9_-]/', '', $receipt) . '.' . $extension;
-
     $headers = [
         'MIME-Version: 1.0',
         'Reply-To: ' . $safeReplyTo,
         'Content-Type: multipart/mixed; boundary="' . $boundary . '"',
     ];
-
     $body = '--' . $boundary . "\r\n"
-        . "Content-Type: text/plain; charset=UTF-8\r\n"
-        . "Content-Transfer-Encoding: 8bit\r\n\r\n"
+        . "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
         . $textBody . "\r\n\r\n"
         . '--' . $boundary . "\r\n"
         . 'Content-Type: ' . $mime . '; name="' . $attachmentName . '"' . "\r\n"
@@ -101,9 +85,7 @@ try {
     $validUrlFound = false;
     foreach ($urls as $url) {
         $url = trim((string)$url);
-        if ($url === '') {
-            continue;
-        }
+        if ($url === '') continue;
         if (!filter_var($url, FILTER_VALIDATE_URL)) {
             throw new RuntimeException('該当ページURLの形式が正しくありません。');
         }
@@ -142,14 +124,18 @@ try {
     }
 
     $receipt = 'DEL-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
+    $attachmentName = 'identity-document-' . preg_replace('/[^A-Za-z0-9_-]/', '', $receipt) . '.' . $extensions[$mime];
+    $attachmentSize = number_format($size / 1024, 1) . ' KB';
     $mailBody = "受付番号: {$receipt}\n"
-        . "対象サイト: PinkClub Actress\n"
+        . "対象サイト: PinkClub-FL\n"
         . "お名前（本名）: {$name}\n"
         . "メールアドレス: {$email}\n"
         . "電話番号: " . ($phone !== '' ? $phone : '未入力') . "\n\n"
         . "該当ページURL:\n{$pageUrls}\n\n"
         . "申請理由:\n{$reason}\n\n"
-        . "本人確認書類はこのメールに添付されています。サーバーには保存していません。";
+        . "本人確認書類（必須）: 添付済み\n"
+        . "添付ファイル: {$attachmentName} ({$attachmentSize})\n"
+        . "本人確認書類はサーバーには保存していません。";
 
     if (!deletion_request_send_mail($toEmail, $email, $receipt, $mailBody, $tmp, $mime, $extensions[$mime])) {
         throw new RuntimeException('削除依頼メールの送信に失敗しました。時間をおいて再度お試しください。');
@@ -157,8 +143,11 @@ try {
 
     header('Location: ' . $backUrl . '&receipt=' . rawurlencode($receipt));
     exit;
+} catch (RuntimeException $e) {
+    header('Location: ' . $backUrl . '&deletion_error=' . rawurlencode(mb_substr($e->getMessage(), 0, 200)));
+    exit;
 } catch (Throwable $e) {
-    $message = mb_substr($e->getMessage(), 0, 200);
-    header('Location: ' . $backUrl . '&deletion_error=' . rawurlencode($message));
+    error_log('deletion request failed: ' . $e->getMessage());
+    header('Location: ' . $backUrl . '&deletion_error=' . rawurlencode('処理中にエラーが発生しました。時間をおいて再度お試しください。'));
     exit;
 }

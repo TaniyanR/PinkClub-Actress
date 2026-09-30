@@ -1,17 +1,51 @@
 ErrorDocument 404 /404.php
+Options -Indexes
 RewriteEngine On
-RewriteCond %{HTTP_HOST} ^www\.pinkclub-fanza\.com$ [NC]
-RewriteRule ^ https://pinkclub-fanza.com%{REQUEST_URI} [R=301,L,NE]
+RewriteRule (^|/)(?:\.git|\.env|\.svn)(?:[/.]|$) - [F,L,NC]
+RewriteRule ^(?:tests|scripts|docs)(?:/|$) - [F,L,NC]
+RewriteCond %{HTTP_HOST} ^www\.pinkclub-fl\.com$ [NC]
+RewriteRule ^ https://pinkclub-fl.com%{REQUEST_URI} [R=301,L,NE]
+RewriteCond %{HTTP_HOST} ^pinkclub-fl\.com$ [NC]
 RewriteCond %{HTTPS} !=on
-RewriteRule ^(?:index\.(?:php|com))?$ https://%{HTTP_HOST}/ [R=301,L]
+RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+RewriteRule ^ https://pinkclub-fl.com%{REQUEST_URI} [R=301,L,NE]
 RewriteRule ^index\.(?:php|com)$ / [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+public/(item|items|actress|actresses|amateur_actresses|genre|genres|maker|makers|series_detail|series_list|label|labels|author|authors|posts|search)\.php(?:[?\s]) [NC]
-RewriteRule ^public/(item|items|actress|actresses|amateur_actresses|genre|genres|maker|makers|series_detail|series_list|label|labels|author|authors|posts|search)\.php$ /$1.php [R=301,L,NE]
-RewriteCond %{THE_REQUEST} \s/+(?:public/)?series_one\.php(?:[?\s]) [NC]
-RewriteRule ^(?:public/)?series_one\.php$ /series_detail.php [R=301,L,NE]
-RewriteRule ^(config(?:\.local)?\.php|cache|logs|config|lib|sql)(/|$) - [F,L]
+RewriteCond %{THE_REQUEST} \s/+public/(item|items|search)\.php(?:[?\s]) [NC]
+RewriteRule ^public/(item|items|search)\.php$ /$1.php [R=301,L,NE]
+RewriteRule ^robots\.txt$ public/robots.php [L]
+RewriteRule ^(config(?:\.local)?\.php|cache|storage|logs|config|lib|sql)(/|$) - [F,L]
 RewriteRule ^public/ - [L]
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
+RewriteCond %{REQUEST_URI} !^/indexnow-key\.php$
 RewriteRule ^(.*)$ public/$1 [L]
+
+<IfModule mod_expires.c>
+ExpiresActive On
+ExpiresByType text/css "access plus 1 year"
+ExpiresByType application/javascript "access plus 1 year"
+ExpiresByType image/jpeg "access plus 1 year"
+ExpiresByType image/png "access plus 1 year"
+ExpiresByType image/gif "access plus 1 year"
+ExpiresByType image/webp "access plus 1 year"
+ExpiresByType image/svg+xml "access plus 1 year"
+ExpiresByType image/x-icon "access plus 1 year"
+ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+<IfModule mod_headers.c>
+SetEnvIf Request_URI "^/(?:public/)?search\.php(?:[/?]|$)" pcf_search_noindex=1
+SetEnvIf Request_URI "^/(?:public/)?out\.php(?:[/?]|$)" pcf_out_referrer=1
+Header set X-Robots-Tag "noindex, follow" env=pcf_search_noindex
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin" env=!pcf_out_referrer
+Header always set Referrer-Policy "unsafe-url" env=pcf_out_referrer
+Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+<FilesMatch "\.(?:css|js|jpe?g|png|gif|webp|svg|ico|woff2)$">
+Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+</IfModule>
+<IfModule mod_deflate.c>
+AddOutputFilterByType DEFLATE text/html text/plain text/css application/javascript application/json application/xml image/svg+xml
+</IfModule>

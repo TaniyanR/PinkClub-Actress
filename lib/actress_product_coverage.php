@@ -57,13 +57,6 @@ function pca_product_coverage_targets(int $limit): array
              LEFT JOIN actress_product_sync_state s ON s.actress_id=a.id
              WHERE a.dmm_id REGEXP '^[0-9]+$'
                AND TRIM(COALESCE(a.name,''))<>''
-               AND NOT EXISTS (
-                   SELECT 1
-                   FROM item_actresses ia
-                   INNER JOIN items i ON i.id=ia.item_id
-                   WHERE ia.dmm_id=a.dmm_id
-                     AND i.floor_code='videoa'
-               )
              ORDER BY
                CASE WHEN s.checked_at IS NULL THEN 0 ELSE 1 END ASC,
                s.checked_at ASC,

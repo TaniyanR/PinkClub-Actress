@@ -9,32 +9,72 @@ function installer_last_error_file_path(): string { return installer_logs_dir() 
 function installer_log(string $message): void
 {
     if (!is_dir(installer_logs_dir())) { @mkdir(installer_logs_dir(), 0755, true); }
-    @file_put_contents(installer_log_file_path(), sprintf("[%s] %s\n", date('Y-m-d H:i:s'), $message), FILE_APPEND);
+    @file_put_contents(installer_log_file_path(), sprintf("[%s] %s\n", date('Y-m-d H:i:s'), $message), FILE_APPEND | LOCK_EX);
 }
 
 function installer_log_exception(string $step, Throwable $exception, ?string $sql = null): void
 {
-    installer_log(sprintf('step=%s exception=%s message=%s location=%s:%d', $step, get_class($exception), $exception->getMessage(), $exception->getFile(), $exception->getLine()));
-    if ($sql !== null && $sql !== '') { installer_log('failed_sql=' . $sql); }
+    installer_log(sprintf('step=%s exception=%s status=failed', $step, get_class($exception)));
 }
 
-function installer_clear_last_error(): void { if (is_file(installer_last_error_file_path())) { @unlink(installer_last_error_file_path()); } }
+function installer_clear_last_error(): void
+{
+    if (is_file(installer_last_error_file_path())) { @unlink(installer_last_error_file_path()); }
+}
 
 function installer_record_error_summary(string $step, Throwable $exception, ?string $failedSql = null): void
 {
     $payload = [
-        'time' => date('c'), 'step' => $step, 'class' => get_class($exception), 'message' => $exception->getMessage(),
-        'file' => $exception->getFile(), 'line' => $exception->getLine(), 'failed_sql' => $failedSql,
+        'time' => date('c'),
+        'step' => $step,
+        'class' => get_class($exception),
+        'message' => installer_user_error_message($exception),
     ];
     if (!is_dir(installer_logs_dir())) { @mkdir(installer_logs_dir(), 0755, true); }
-    @file_put_contents(installer_last_error_file_path(), json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+    @file_put_contents(
+        installer_last_error_file_path(),
+        json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
+        LOCK_EX
+    );
 }
 
 function installer_last_error_summary(): ?array
 {
     if (!is_file(installer_last_error_file_path())) { return null; }
     $decoded = json_decode((string)file_get_contents(installer_last_error_file_path()), true);
-    return is_array($decoded) ? $decoded : null;
+    if (!is_array($decoded)) { return null; }
+
+    // Historical releases stored file paths and SQL here. Never expose those
+    // fields through the setup diagnostics, even if an old JSON file remains.
+    return [
+        'time' => (string)($decoded['time'] ?? ''),
+        'step' => (string)($decoded['step'] ?? ''),
+        'class' => (string)($decoded['class'] ?? ''),
+        'message' => isset($decoded['message']) && is_string($decoded['message']) && $decoded['message'] !== ''
+            ? 'セットアップ処理でエラーが発生しました。入力したDB情報とサーバー設定を確認してください。'
+            : '',
+    ];
+}
+
+function installer_safe_log_line(string $line): string
+{
+    $time = '';
+    if (preg_match('/^\[[^\]]+\]/', $line, $m) === 1) {
+        $time = $m[0] . ' ';
+    }
+    $parts = [];
+    foreach (['step', 'status', 'exception', 'migration_applied', 'failed_keys', 'mysqli_errno', 'admin_exists', 'admin_created', 'settings_row_upserted', 'settings_table_normalized', 'already_completed', 'auto_run_blocked'] as $key) {
+        if (preg_match('/(?:^|\s)' . preg_quote($key, '/') . '=([^\s]+)/', $line, $m) === 1) {
+            $value = preg_replace('/[^A-Za-z0-9_.:,\-]/', '', (string)$m[1]) ?? '';
+            if ($value !== '') {
+                $parts[] = $key . '=' . mb_substr($value, 0, 120);
+            }
+        }
+    }
+    if ($parts === []) {
+        return $time . 'diagnostic=redacted';
+    }
+    return $time . implode(' ', $parts);
 }
 
 function installer_log_tail(int $maxLines = 20): array
@@ -42,7 +82,8 @@ function installer_log_tail(int $maxLines = 20): array
     if (!is_file(installer_log_file_path())) { return ['lines' => [], 'error' => 'install.log が存在しません。']; }
     $lines = @file(installer_log_file_path(), FILE_IGNORE_NEW_LINES);
     if (!is_array($lines)) { return ['lines' => [], 'error' => 'install.log の読み取りに失敗しました。']; }
-    return ['lines' => array_slice($lines, -$maxLines), 'error' => null];
+    $tail = array_slice($lines, -max(1, min(100, $maxLines)));
+    return ['lines' => array_map(static fn(string $line): string => installer_safe_log_line($line), $tail), 'error' => null];
 }
 
 function installer_user_error_message(Throwable $exception): string
@@ -53,25 +94,47 @@ function installer_user_error_message(Throwable $exception): string
     return 'セットアップ中にエラーが発生しました。logs/install.log を確認してください。';
 }
 
-function installer_request_host(): string { $h=strtolower(trim((string)($_SERVER['HTTP_HOST']??''))); return $h===''?'':explode(':',$h,2)[0]; }
+function installer_request_host(): string
+{
+    $h = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+    return $h === '' ? '' : explode(':', $h, 2)[0];
+}
 function installer_request_remote_addr(): string { return strtolower(trim((string)($_SERVER['REMOTE_ADDR'] ?? ''))); }
-function installer_is_local_request(): bool { return in_array(installer_request_remote_addr(), ['127.0.0.1','::1'], true); }
+function installer_is_local_request(): bool { return in_array(installer_request_remote_addr(), ['127.0.0.1', '::1'], true); }
 function installer_can_auto_run(): bool { return installer_is_local_request(); }
 
 function installer_auto_run_if_needed(): array
 {
     installer_log('step=auto_check begin');
     $status = installer_status();
-    if (($status['completed'] ?? false) === true) { installer_log('step=auto_check already_completed=true'); return ['attempted' => false, 'success' => true, 'blocked' => false, 'result' => null]; }
+    if (($status['completed'] ?? false) === true) {
+        installer_log('step=auto_check already_completed=true');
+        return ['attempted' => false, 'success' => true, 'blocked' => false, 'result' => null];
+    }
     if (!installer_can_auto_run()) {
-        installer_log('step=server_connection blocked host=' . installer_request_host() . ' remote=' . installer_request_remote_addr());
-        return ['attempted' => false, 'success' => false, 'blocked' => true, 'message' => '自動セットアップは localhost / 127.0.0.1 / ::1 でのみ実行できます。', 'result' => null];
+        installer_log('step=server_connection auto_run_blocked=true');
+        return [
+            'attempted' => false,
+            'success' => false,
+            'blocked' => true,
+            'message' => '自動セットアップは localhost / 127.0.0.1 / ::1 でのみ実行できます。',
+            'result' => null,
+        ];
     }
     $result = installer_run();
     return ['attempted' => true, 'success' => (bool)($result['success'] ?? false), 'blocked' => false, 'result' => $result];
 }
 
-function installer_can_connect_server(): bool { try { db_server_pdo(); return true; } catch (Throwable $e) { installer_log_exception('server_connection',$e); return false; } }
+function installer_can_connect_server(): bool
+{
+    try {
+        db_server_pdo();
+        return true;
+    } catch (Throwable $e) {
+        installer_log_exception('server_connection', $e);
+        return false;
+    }
+}
 
 function installer_ensure_database_exists(): void
 {
@@ -83,13 +146,16 @@ function installer_ensure_database_exists(): void
         db_reset_connections();
         return;
     }
-    db_server_pdo()->exec(sprintf('CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci', str_replace('`','``',$dbname)));
+    db_server_pdo()->exec(sprintf(
+        'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+        str_replace('`', '``', $dbname)
+    ));
     db_reset_connections();
 }
 
 function installer_read_sql_file(string $path): string
 {
-    if (!is_file($path)) throw new RuntimeException('SQLファイルが見つかりません: ' . $path);
+    if (!is_file($path)) throw new RuntimeException('必要なSQLファイルが見つかりません。');
     return (string)file_get_contents($path);
 }
 
@@ -97,10 +163,9 @@ function installer_apply_sql_file_mysqli_multi(mysqli $mysqli, string $path, str
 {
     $sql = installer_read_sql_file($path);
     if (!$mysqli->multi_query($sql)) {
-        $failedSql = trim(substr($sql, 0, 1000));
-        $GLOBALS['installer_last_failed_sql'] = $failedSql;
-        installer_log('step=' . $step . ' mysqli_error=' . $mysqli->error);
-        throw new RuntimeException('SQL実行失敗: ' . $mysqli->error . ' sql=' . $failedSql);
+        $GLOBALS['installer_last_failed_sql'] = 'redacted';
+        installer_log('step=' . $step . ' mysqli_errno=' . (int)$mysqli->errno);
+        throw new RuntimeException('SQL実行に失敗しました。');
     }
 
     $count = 0;
@@ -113,7 +178,8 @@ function installer_apply_sql_file_mysqli_multi(mysqli $mysqli, string $path, str
     } while ($mysqli->more_results() && $mysqli->next_result());
 
     if ($mysqli->errno !== 0) {
-        throw new RuntimeException('SQL実行失敗: ' . $mysqli->error);
+        installer_log('step=' . $step . ' mysqli_errno=' . (int)$mysqli->errno);
+        throw new RuntimeException('SQL実行に失敗しました。');
     }
 
     return $count;
@@ -128,27 +194,22 @@ function installer_execute_sql_file(string $path, string $step): int
     }
 
     if (!$mysqli->real_connect((string)$cfg['host'], (string)$cfg['user'], (string)$cfg['pass'], (string)$cfg['dbname'], (int)$cfg['port'])) {
-        throw new RuntimeException('mysqli接続失敗: ' . $mysqli->connect_error);
+        throw new RuntimeException('DB接続に失敗しました。');
     }
 
     if (!$mysqli->set_charset((string)$cfg['charset'])) {
-        throw new RuntimeException('文字コード設定失敗: ' . $mysqli->error);
+        throw new RuntimeException('文字コード設定に失敗しました。');
     }
 
     try {
         return installer_apply_sql_file_mysqli_multi($mysqli, $path, $step);
     } catch (Throwable $e) {
-        if (!isset($GLOBALS['installer_last_failed_sql']) || !is_string($GLOBALS['installer_last_failed_sql'])) {
-            $sql = installer_read_sql_file($path);
-            $GLOBALS['installer_last_failed_sql'] = substr($sql, 0, 2000);
-        }
-        installer_log_exception($step, $e, $GLOBALS['installer_last_failed_sql']);
+        installer_log_exception($step, $e);
         throw $e;
     } finally {
         $mysqli->close();
     }
 }
-
 
 function installer_ensure_migrations_table(PDO $pdo): void
 {
@@ -193,8 +254,10 @@ function installer_normalize_settings_table(PDO $pdo, string $stepLabel): void
         return;
     }
 
-    $tmpTable = 'settings_kv_tmp';
-    $pdo->exec('DROP TABLE IF EXISTS `' . $tmpTable . '`');
+    // Use unique names so an interrupted earlier setup and its backup are
+    // preserved instead of being deleted by a later retry.
+    $suffix = bin2hex(random_bytes(8));
+    $tmpTable = 'settings_kv_tmp_' . $suffix;
     $pdo->exec('CREATE TABLE `' . $tmpTable . '` (setting_key VARCHAR(191) PRIMARY KEY, setting_value LONGTEXT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
     $pairs = [
@@ -232,21 +295,31 @@ function installer_normalize_settings_table(PDO $pdo, string $stepLabel): void
         $pdo->exec($sql);
     }
 
-    $backup = 'settings_legacy_backup';
-    $pdo->exec('DROP TABLE IF EXISTS `' . $backup . '`');
+    $backup = 'settings_legacy_backup_' . $suffix;
     $pdo->exec('RENAME TABLE settings TO `' . $backup . '`, `' . $tmpTable . '` TO settings');
-    installer_log('step=' . $stepLabel . ' settings_table_normalized=true');
+    if (function_exists('site_settings_columns_reset')) {
+        site_settings_columns_reset();
+    } else {
+        unset($GLOBALS['__site_settings_columns']);
+    }
+    installer_log('step=' . $stepLabel . ' settings_table_normalized=true backup=' . $backup);
 }
 
 function installer_ensure_admin_user(PDO $pdo, string $stepLabel): bool
 {
-    $stmt = $pdo->prepare('SELECT 1 FROM admins WHERE username = :username LIMIT 1');
-    $stmt->execute(['username' => 'admin']);
-    if ($stmt->fetchColumn() !== false) { installer_log('step=' . $stepLabel . ' admin_exists=true'); return false; }
+    $stmt = $pdo->query('SELECT 1 FROM admins ORDER BY id ASC LIMIT 1');
+    if ($stmt->fetchColumn() !== false) {
+        installer_log('step=' . $stepLabel . ' admin_exists=true');
+        return false;
+    }
     $initialPassword = substr(str_replace(['+', '/', '='], '', base64_encode(random_bytes(18))), 0, 18);
     $insert = $pdo->prepare('INSERT INTO admins (username, password_hash) VALUES (:username, :password_hash)');
     $insert->execute(['username' => 'admin', 'password_hash' => password_hash($initialPassword, PASSWORD_DEFAULT)]);
-    installer_log('step=' . $stepLabel . ' admin_created=true initial_password=' . $initialPassword);
+    $GLOBALS['installer_initial_credentials'] = ['username' => 'admin', 'password' => $initialPassword];
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['installer_initial_credentials'] = $GLOBALS['installer_initial_credentials'];
+    }
+    installer_log('step=' . $stepLabel . ' admin_created=true');
     return true;
 }
 
@@ -263,47 +336,38 @@ function installer_ensure_settings_row(PDO $pdo, string $stepLabel): bool
     }
 }
 
+/**
+ * Read-only installer status. No schema normalization or setting writes occur here.
+ */
 function installer_status(): array
 {
     $status = ['server_connection'=>false,'db_connection'=>false,'admins_table'=>false,'settings_table'=>false,'admin_user'=>false,'settings_row'=>false,'completed'=>false];
     $status['server_connection'] = installer_can_connect_server();
     if (!$status['server_connection']) {
-        $status['completed'] = false;
         return $status;
     }
     $status['db_connection'] = db_can_connect();
     if (!$status['db_connection']) {
-        $status['completed'] = false;
         return $status;
     }
     $status['admins_table'] = db_table_exists('admins');
     $status['settings_table'] = db_table_exists('settings');
     if ($status['admins_table']) {
-        $stmt = db()->prepare('SELECT 1 FROM admins WHERE username = :username LIMIT 1');
-        $stmt->execute(['username' => 'admin']);
-        $status['admin_user'] = $stmt->fetchColumn() !== false;
+        try {
+            $stmt = db()->query('SELECT 1 FROM admins ORDER BY id ASC LIMIT 1');
+            $status['admin_user'] = $stmt !== false && $stmt->fetchColumn() !== false;
+        } catch (Throwable) {
+            $status['admin_user'] = false;
+        }
     }
     if ($status['settings_table']) {
-        require_once __DIR__ . '/site_settings.php';
-
         try {
-            installer_normalize_settings_table(db(), 'status_normalize_settings');
-        } catch (Throwable $e) {
-            installer_log_exception('status_normalize_settings', $e);
+            $stmt = db()->prepare('SELECT setting_value FROM settings WHERE setting_key = :key LIMIT 1');
+            $stmt->execute([':key' => 'installer.ready']);
+            $status['settings_row'] = (string)($stmt->fetchColumn() ?: '') === '1';
+        } catch (Throwable) {
+            $status['settings_row'] = false;
         }
-
-        $ready = site_setting_get('installer.ready', '') === '1';
-        if (!$ready) {
-            try {
-                // 既存環境の自己修復: readiness キーが欠けているだけなら補完する
-                site_setting_set('installer.ready', '1');
-                $ready = site_setting_get('installer.ready', '') === '1';
-            } catch (Throwable $ignore) {
-                $ready = false;
-            }
-        }
-
-        $status['settings_row'] = $ready;
     }
     $status['completed'] = (
         $status['server_connection']
@@ -318,10 +382,13 @@ function installer_status(): array
 
 function installer_run(): array
 {
-    installer_log('step=start db=' . (app_config()['db']['dbname'] ?? '')); 
+    installer_log('step=start');
     $result = ['success'=>false,'steps'=>[],'error'=>null,'error_detail'=>null,'failed_sql'=>null,'error_summary'=>null,'log_tail'=>null];
     $currentStep = 'server_connection';
-    $step = static function (string $id, bool $ok, string $message = '') use (&$result): void { $result['steps'][]=['id'=>$id,'status'=>$ok?'ok':'ng','message'=>$message]; };
+    unset($GLOBALS['installer_initial_credentials']);
+    $step = static function (string $id, bool $ok, string $message = '') use (&$result): void {
+        $result['steps'][] = ['id'=>$id,'status'=>$ok?'ok':'ng','message'=>$message];
+    };
 
     try {
         installer_clear_last_error();
@@ -329,42 +396,52 @@ function installer_run(): array
         if (!installer_can_connect_server()) throw new RuntimeException('MySQLサーバーに接続できません。');
         $step('server_connection', true);
 
-        $currentStep='create_database'; installer_ensure_database_exists(); $step('create_database', true);
+        $currentStep = 'create_database';
+        installer_ensure_database_exists();
+        $step('create_database', true);
 
-        $currentStep='create_tables'; $tableCount = installer_execute_sql_file(__DIR__ . '/../sql/schema.sql', 'create_tables'); $step('create_tables', true, 'results=' . $tableCount);
+        $currentStep = 'create_tables';
+        $tableCount = installer_execute_sql_file(__DIR__ . '/../sql/schema.sql', 'create_tables');
+        $step('create_tables', true, 'results=' . $tableCount);
 
-        $currentStep='apply_migrations'; $migrationCount = installer_apply_migrations(__DIR__ . '/../sql/migrations', 'apply_migrations'); $step('apply_migrations', true, 'count=' . $migrationCount);
+        $currentStep = 'apply_migrations';
+        $migrationCount = installer_apply_migrations(__DIR__ . '/../sql/migrations', 'apply_migrations');
+        $step('apply_migrations', true, 'count=' . $migrationCount);
 
-        $currentStep='normalize_settings'; installer_normalize_settings_table(db(), 'normalize_settings'); $step('normalize_settings', true);
+        $currentStep = 'normalize_settings';
+        installer_normalize_settings_table(db(), 'normalize_settings');
+        $step('normalize_settings', true);
 
-        $currentStep='seed_data';
+        $currentStep = 'seed_data';
         $seedPath = __DIR__ . '/../sql/seed.sql';
         if (is_file($seedPath)) installer_execute_sql_file($seedPath, 'seed_data');
-        installer_ensure_admin_user(db(),'seed_data');
-        installer_ensure_settings_row(db(),'seed_data');
+        installer_ensure_admin_user(db(), 'seed_data');
+        installer_ensure_settings_row(db(), 'seed_data');
         $step('seed_data', true);
 
-        $currentStep='completion_check';
-        $dbName = (string)db()->query('SELECT DATABASE()')->fetchColumn();
-        installer_log('step=completion_check selected_database=' . $dbName . ' config_database=' . (string)(app_config()['db']['dbname'] ?? ''));
+        $currentStep = 'completion_check';
         installer_ensure_admin_user(db(), 'completion_check_retry');
         installer_ensure_settings_row(db(), 'completion_check_retry');
         $status = installer_status();
         if (($status['completed'] ?? false) !== true) {
             $requiredKeys = ['server_connection', 'db_connection', 'admins_table', 'settings_table', 'admin_user', 'settings_row'];
             $failedKeys = array_values(array_filter($requiredKeys, static fn(string $key): bool => ($status[$key] ?? false) !== true));
-            installer_log('step=completion_check status=' . json_encode($status, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ' failed_keys=' . json_encode($failedKeys, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            throw new RuntimeException('セットアップ完了条件を満たせませんでした。 status=' . json_encode($status, JSON_UNESCAPED_UNICODE));
+            installer_log('step=completion_check failed_keys=' . implode(',', $failedKeys));
+            throw new RuntimeException('セットアップ完了条件を満たせませんでした。');
         }
 
-        $step('completion_check', true); installer_log('step=completed status=ok'); $result['success']=true;
+        $step('completion_check', true);
+        installer_log('step=completed status=ok');
+        $result['success'] = true;
+        if (isset($GLOBALS['installer_initial_credentials']) && is_array($GLOBALS['installer_initial_credentials'])) {
+            $result['initial_credentials'] = $GLOBALS['installer_initial_credentials'];
+        }
     } catch (Throwable $e) {
-        $failedSql = is_string($GLOBALS['installer_last_failed_sql'] ?? null) ? $GLOBALS['installer_last_failed_sql'] : null;
-        installer_log_exception($currentStep, $e, $failedSql);
-        installer_record_error_summary($currentStep, $e, $failedSql);
+        installer_log_exception($currentStep, $e);
+        installer_record_error_summary($currentStep, $e);
         $result['error'] = installer_user_error_message($e);
-        $result['error_detail'] = $e->getMessage();
-        $result['failed_sql'] = $failedSql;
+        $result['error_detail'] = null;
+        $result['failed_sql'] = null;
         $step($currentStep, false, $result['error']);
     }
 

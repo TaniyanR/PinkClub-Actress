@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/dmm_api_client.php';
 require_once __DIR__ . '/dmm_normalizer.php';
 require_once __DIR__ . '/repository.php';
+require_once __DIR__ . '/indexnow.php';
 
 class DmmSyncService
 {
@@ -95,17 +96,45 @@ class DmmSyncService
                 }
                 $name = (string) ($r['name'] ?? '');
                 $ruby = $r['ruby'] ?? null;
-                $stmt = $this->pdo->prepare("INSERT INTO {$table}(dmm_id,name,ruby,birthday,prefectures,image_url,image_small,image_large,updated_at) VALUES(:id,:name,:ruby,:birthday,:pref,:img,:img_small,:img_large,NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),ruby=VALUES(ruby),birthday=VALUES(birthday),prefectures=VALUES(prefectures),image_url=VALUES(image_url),image_small=VALUES(image_small),image_large=VALUES(image_large),updated_at=NOW()");
-                $stmt->execute([
-                    'id' => $id,
-                    'name' => $name,
-                    'ruby' => $ruby,
-                    'birthday' => $r['birthday'] ?? null,
-                    'pref' => $r['prefectures'] ?? null,
-                    'img' => $r['imageURL']['large'] ?? ($r['image_url'] ?? null),
-                    'img_small' => $r['imageURL']['small'] ?? ($r['image_small'] ?? null),
-                    'img_large' => $r['imageURL']['large'] ?? ($r['image_large'] ?? null),
-                ]);
+                if ($kind === 'actress') {
+                    $stmt = $this->pdo->prepare(
+                        "INSERT INTO actresses(dmm_id,name,ruby,birthday,prefectures,hobby,bust,cup,waist,hip,height,blood_type,image_url,image_small,image_large,updated_at)
+                         VALUES(:id,:name,:ruby,:birthday,:pref,:hobby,:bust,:cup,:waist,:hip,:height,:blood_type,:img,:img_small,:img_large,NOW())
+                         ON DUPLICATE KEY UPDATE
+                           name=VALUES(name),ruby=VALUES(ruby),birthday=VALUES(birthday),prefectures=VALUES(prefectures),
+                           hobby=VALUES(hobby),bust=VALUES(bust),cup=VALUES(cup),waist=VALUES(waist),hip=VALUES(hip),height=VALUES(height),blood_type=VALUES(blood_type),
+                           image_url=VALUES(image_url),image_small=VALUES(image_small),image_large=VALUES(image_large),updated_at=NOW()"
+                    );
+                    $stmt->execute([
+                        'id' => $id,
+                        'name' => $name,
+                        'ruby' => $ruby,
+                        'birthday' => $r['birthday'] ?? null,
+                        'pref' => $r['prefectures'] ?? null,
+                        'hobby' => $r['hobby'] ?? null,
+                        'bust' => $r['bust'] ?? null,
+                        'cup' => $r['cup'] ?? null,
+                        'waist' => $r['waist'] ?? null,
+                        'hip' => $r['hip'] ?? null,
+                        'height' => $r['height'] ?? null,
+                        'blood_type' => $r['blood_type'] ?? null,
+                        'img' => $r['imageURL']['large'] ?? ($r['image_url'] ?? null),
+                        'img_small' => $r['imageURL']['small'] ?? ($r['image_small'] ?? null),
+                        'img_large' => $r['imageURL']['large'] ?? ($r['image_large'] ?? null),
+                    ]);
+                } else {
+                    $stmt = $this->pdo->prepare("INSERT INTO {$table}(dmm_id,name,ruby,birthday,prefectures,image_url,image_small,image_large,updated_at) VALUES(:id,:name,:ruby,:birthday,:pref,:img,:img_small,:img_large,NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),ruby=VALUES(ruby),birthday=VALUES(birthday),prefectures=VALUES(prefectures),image_url=VALUES(image_url),image_small=VALUES(image_small),image_large=VALUES(image_large),updated_at=NOW()");
+                    $stmt->execute([
+                        'id' => $id,
+                        'name' => $name,
+                        'ruby' => $ruby,
+                        'birthday' => $r['birthday'] ?? null,
+                        'pref' => $r['prefectures'] ?? null,
+                        'img' => $r['imageURL']['large'] ?? ($r['image_url'] ?? null),
+                        'img_small' => $r['imageURL']['small'] ?? ($r['image_small'] ?? null),
+                        'img_large' => $r['imageURL']['large'] ?? ($r['image_large'] ?? null),
+                    ]);
+                }
                 $count++;
             }
             $this->pdo->commit();
@@ -145,6 +174,7 @@ class DmmSyncService
         $offset = $this->normalizeItemListOffset((int)($params['offset'] ?? 1));
         $response = $this->client->fetchItems($siteCode, $serviceCode, $floorCode, ['hits' => $hits, 'offset' => $offset]);
         $items = DmmNormalizer::normalizeItemsResponse($response);
+        $items = array_values(array_filter($items, fn(array $item): bool => $this->itemHasRegisteredActress($item)));
         return $this->saveItems($items, 'items');
     }
 
@@ -182,10 +212,10 @@ class DmmSyncService
             $requestParams = array_merge($extraParams, ['hits' => $hitLimit, 'offset' => $requestOffset]);
             $response = $this->client->fetchItems($siteCode, $serviceCode, $floorCode, $requestParams);
             $fetchedItems = DmmNormalizer::normalizeItemsResponse($response);
-            $fetchedCount = count($fetchedItems);
-            $apiCount += $fetchedCount;
-            $checkedCount += $fetchedCount;
-            if ($fetchedCount === 0) {
+            $rawFetchedCount = count($fetchedItems);
+            $apiCount += $rawFetchedCount;
+            $checkedCount += $rawFetchedCount;
+            if ($rawFetchedCount === 0) {
                 $reachedEnd = true;
                 if ($advancePastOffset) {
                     $nextOffset = 1;
@@ -193,6 +223,11 @@ class DmmSyncService
                 return 0;
             }
 
+            $fetchedItems = array_values(array_filter(
+                $fetchedItems,
+                fn(array $item): bool => $this->itemHasRegisteredActress($item)
+            ));
+            $fetchedCount = count($fetchedItems);
             $processedCount = 0;
             $saveItems = [];
             $saveUpdatedCount = 0;
@@ -241,14 +276,14 @@ class DmmSyncService
             }
 
             if ($advancePastOffset) {
-                $nextOffset = $this->normalizeItemListOffset($requestOffset + $processedCount);
-                if ($fetchedCount < $hitLimit) {
+                $nextOffset = $this->normalizeItemListOffset($requestOffset + $rawFetchedCount);
+                if ($rawFetchedCount < $hitLimit) {
                     $nextOffset = 1;
                     $reachedEnd = true;
                 }
             }
 
-            return $fetchedCount;
+            return $rawFetchedCount;
         };
 
         $fetchAndSave(1, false);
@@ -283,6 +318,33 @@ class DmmSyncService
         ];
     }
 
+    /**
+     * 商品APIだけを根拠に女優マスタは増やさない。
+     * 女優情報APIですでに登録済みの数値DMM女優IDが1人でも含まれる作品だけ保存する。
+     */
+    private function itemHasRegisteredActress(array $item): bool
+    {
+        $ids = [];
+        foreach ((array)($item['actresses'] ?? []) as $performer) {
+            if (!is_array($performer)) {
+                continue;
+            }
+            $id = trim((string)($performer['id'] ?? ''));
+            if ($id !== '' && preg_match('/^[0-9]+$/', $id) === 1) {
+                $ids[$id] = true;
+            }
+        }
+        if ($ids === []) {
+            return false;
+        }
+
+        $ids = array_keys($ids);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->pdo->prepare("SELECT 1 FROM actresses WHERE dmm_id IN ({$placeholders}) AND dmm_id REGEXP '^[0-9]+$' LIMIT 1");
+        $stmt->execute($ids);
+        return (bool)$stmt->fetchColumn();
+    }
+
     private function normalizeItemListOffset(int $offset): int
     {
         $offset = max(1, $offset);
@@ -306,6 +368,7 @@ class DmmSyncService
                 $exists = $this->itemExistsByContentId((string)($item['content_id'] ?? ''));
                 $itemId = $this->upsertItem($item);
                 $this->rebuildItemRelations($itemId, $item);
+                pcf_indexnow_item_changed($itemId);
                 if (function_exists('generate_tags_for_item')) {
                     generate_tags_for_item([
                         'content_id' => $item['content_id'] ?? '',
@@ -394,12 +457,50 @@ class DmmSyncService
 
     private function rebuildItemRelations(int $itemId, array $item): void
     {
+        // 女優ID指定APIで補完した「登録済み女優との関係」は、通常フロア更新で消さない。
+        // 商品API側の出演者ID表現が女優APIと異なるケースでも、個別ページの商品カードを維持する。
+        $preservedActresses = [];
+        $preserveStmt = $this->pdo->prepare(
+            "SELECT ia.dmm_id, ia.actress_name
+             FROM item_actresses ia
+             INNER JOIN actresses a ON a.dmm_id = ia.dmm_id
+             WHERE ia.item_id = ?
+               AND a.dmm_id REGEXP '^[0-9]+$'"
+        );
+        $preserveStmt->execute([$itemId]);
+        foreach ($preserveStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $dmmId = trim((string)($row['dmm_id'] ?? ''));
+            $name = trim((string)($row['actress_name'] ?? ''));
+            if ($dmmId !== '' && $name !== '') {
+                $preservedActresses[$dmmId] = $name;
+            }
+        }
+
         $tables = ['item_actresses', 'item_genres', 'item_campaigns', 'item_labels', 'item_directors', 'item_makers', 'item_series', 'item_authors', 'item_actors'];
         foreach ($tables as $table) {
             $this->pdo->prepare("DELETE FROM {$table} WHERE item_id = ?")->execute([$itemId]);
         }
 
         $this->insertRelation($itemId, 'item_actresses', 'actress_name', $item['actresses']);
+
+        $restoreActress = $this->pdo->prepare(
+            'INSERT INTO item_actresses(item_id,dmm_id,actress_name)
+             SELECT :item_id,:dmm_id,:name
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM item_actresses
+                 WHERE item_id=:check_item_id AND dmm_id=:check_dmm_id
+             )'
+        );
+        foreach ($preservedActresses as $dmmId => $name) {
+            $restoreActress->execute([
+                ':item_id' => $itemId,
+                ':dmm_id' => $dmmId,
+                ':name' => $name,
+                ':check_item_id' => $itemId,
+                ':check_dmm_id' => $dmmId,
+            ]);
+        }
+
         $this->insertRelation($itemId, 'item_genres', 'genre_name', $item['genres']);
         $this->insertRelation($itemId, 'item_campaigns', 'campaign_name', $item['campaigns']);
         $this->insertRelation($itemId, 'item_labels', 'label_name', $item['labels']);
@@ -413,7 +514,6 @@ class DmmSyncService
     private function insertRelation(int $itemId, string $table, string $nameCol, array $rows): void
     {
         $masterMap = [
-            'item_actresses' => 'actresses',
             'item_genres' => 'genres',
             'item_makers' => 'makers',
             'item_series' => 'series_master',
@@ -458,6 +558,26 @@ class DmmSyncService
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS item_authors (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id INT UNSIGNED NOT NULL,dmm_id VARCHAR(64) NULL,author_name VARCHAR(255) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_item_author (item_id,dmm_id),CONSTRAINT fk_item_author_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS item_actors (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id INT UNSIGNED NOT NULL,dmm_id VARCHAR(64) NULL,actor_name VARCHAR(255) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_item_actor (item_id,dmm_id),CONSTRAINT fk_item_actor_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS sync_job_state (job_key VARCHAR(64) PRIMARY KEY,next_offset INT NOT NULL DEFAULT 1,next_initial VARCHAR(10) NULL,last_run_at DATETIME NULL,last_success TINYINT(1) NOT NULL DEFAULT 0,last_message TEXT NULL,lock_until DATETIME NULL,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+        $actressColumns = [];
+        $actressStmt = $this->pdo->query('SHOW COLUMNS FROM actresses');
+        foreach (($actressStmt ? $actressStmt->fetchAll(PDO::FETCH_ASSOC) : []) as $col) {
+            $actressColumns[(string)($col['Field'] ?? '')] = true;
+        }
+        $actressProfileColumns = [
+            'hobby' => 'VARCHAR(255) NULL AFTER prefectures',
+            'bust' => 'VARCHAR(32) NULL AFTER hobby',
+            'cup' => 'VARCHAR(32) NULL AFTER bust',
+            'waist' => 'VARCHAR(32) NULL AFTER cup',
+            'hip' => 'VARCHAR(32) NULL AFTER waist',
+            'height' => 'VARCHAR(32) NULL AFTER hip',
+            'blood_type' => 'VARCHAR(32) NULL AFTER height',
+        ];
+        foreach ($actressProfileColumns as $column => $definition) {
+            if (!isset($actressColumns[$column])) {
+                $this->pdo->exec("ALTER TABLE actresses ADD COLUMN {$column} {$definition}");
+            }
+        }
 
         $itemColumns = [];
         $itemStmt = $this->pdo->query('SHOW COLUMNS FROM items');

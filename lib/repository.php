@@ -207,6 +207,10 @@ function items_product_source_where(string $alias = ''): string
 
     $where[] = items_front_release_where($outerPrefix);
 
+    // PinkClub-Actressでは女優APIに登録済みの通常女優と紐付く作品だけ公開対象にする。
+    // 商品API由来の name: 合成IDだけの作品や、未登録人物だけの作品は公開しない。
+    $where[] = 'EXISTS (SELECT 1 FROM item_actresses pca_ia INNER JOIN actresses pca_a ON pca_a.dmm_id = pca_ia.dmm_id WHERE pca_ia.item_id = ' . $outerPrefix . '.id AND pca_a.dmm_id REGEXP "^[0-9]+$")';
+
     if (items_table_exists('rss_items') && items_table_exists('rss_sources') && items_column_exists('source_type', 'rss_sources')) {
         $where[] = 'NOT EXISTS (SELECT 1 FROM rss_items ri INNER JOIN rss_sources rs ON rs.id = ri.source_id WHERE rs.source_type = "partner_link" AND (ri.title = ' . $outerPrefix . '.title OR ri.url = ' . $outerPrefix . '.url OR ri.url = ' . $outerPrefix . '.affiliate_url))';
     }
@@ -1138,6 +1142,13 @@ function upsert_actress(array $actress): string
         ':ruby'        => $actress['ruby']        ?? null,
         ':birthday'    => $actress['birthday']    ?? null,
         ':prefectures' => $actress['prefectures'] ?? null,
+        ':hobby'       => $actress['hobby']       ?? null,
+        ':bust'        => $actress['bust']        ?? null,
+        ':cup'         => $actress['cup']         ?? null,
+        ':waist'       => $actress['waist']       ?? null,
+        ':hip'         => $actress['hip']         ?? null,
+        ':height'      => $actress['height']      ?? null,
+        ':blood_type'  => $actress['blood_type']  ?? null,
         ':image_url'   => $actress['image_url']   ?? null,
         ':image_small' => $actress['image_small'] ?? null,
         ':image_large' => $actress['image_large'] ?? null,
@@ -1150,6 +1161,13 @@ function upsert_actress(array $actress): string
                     ruby        = :ruby,
                     birthday    = :birthday,
                     prefectures = :prefectures,
+                    hobby       = :hobby,
+                    bust        = :bust,
+                    cup         = :cup,
+                    waist       = :waist,
+                    hip         = :hip,
+                    height      = :height,
+                    blood_type  = :blood_type,
                     image_url   = :image_url,
                     image_small = :image_small,
                     image_large = :image_large,
@@ -1161,10 +1179,10 @@ function upsert_actress(array $actress): string
     }
 
     $sql = 'INSERT INTO actresses
-            (dmm_id, name, ruby, birthday, prefectures,
+            (dmm_id, name, ruby, birthday, prefectures, hobby, bust, cup, waist, hip, height, blood_type,
              image_url, image_small, image_large, created_at, updated_at)
             VALUES
-            (:dmm_id, :name, :ruby, :birthday, :prefectures,
+            (:dmm_id, :name, :ruby, :birthday, :prefectures, :hobby, :bust, :cup, :waist, :hip, :height, :blood_type,
              :image_url, :image_small, :image_large, :created_at, :updated_at)';
     $stmt = $pdo->prepare($sql);
     $payload[':created_at'] = $now;
