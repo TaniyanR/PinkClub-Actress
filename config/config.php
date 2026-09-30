@@ -203,8 +203,7 @@ return [
         'floor' => 'videoa',
         'master_floor_id' => '43',
         'catalog_targets' => [
-            ['site' => 'FANZA', 'service' => 'digital', 'floor' => 'videoa', 'label' => '女優メイン動画'],
-            ['site' => 'FANZA', 'service' => 'digital', 'floor' => 'videoc', 'label' => 'しろうと動画'],
+            ['site' => 'FANZA', 'service' => 'digital', 'floor' => 'videoa', 'label' => '登録済み女優の出演作品'],
         ],
     ],
     'pagination' => [
