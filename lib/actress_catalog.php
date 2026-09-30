@@ -162,18 +162,12 @@ function pca_home_page(int $page, int $perPage = 120): array
 {
     $page = max(1, $page);
     $perPage = max(1, min(120, $perPage));
-    $normalRows = pca_fetch_actresses(false, 10000, 0, false);
-    $amateurRows = pca_fetch_actresses(true, 10000, 0, false);
-    $rowsByIdentity = [];
-    foreach (array_merge($normalRows, $amateurRows) as $row) {
-        if (!is_array($row)) continue;
-        $id = (int)($row['id'] ?? 0);
-        $dmm = trim((string)($row['dmm_id'] ?? ''));
-        if ($id <= 0) continue;
-        $key = $dmm !== '' ? 'dmm:' . $dmm : 'id:' . $id;
-        $rowsByIdentity[$key] = $row;
-    }
-    $rows = pca_seeded_shuffle(array_values($rowsByIdentity), (int)sprintf('%u', crc32(gmdate('Y-m-d') . ':pinkclub-actress')));
+
+    // PinkClub-Actressの入口は女優APIで登録済みの通常女優だけ。
+    // 商品APIから生成された name: 合成IDの人物はTOPへ混在させない。
+    $rows = pca_fetch_actresses(false, 10000, 0, false);
+    $rows = pca_seeded_shuffle($rows, (int)sprintf('%u', crc32(gmdate('Y-m-d') . ':pinkclub-actress')));
+
     $total = count($rows);
     $pages = max(1, (int)ceil($total / $perPage));
     $page = min($page, $pages);
