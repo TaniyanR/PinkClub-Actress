@@ -5,11 +5,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/_bootstrap.php';
 require_once __DIR__ . '/partials/public_ui.php';
 require_once __DIR__ . '/../lib/repository.php';
+require_once __DIR__ . '/../lib/public_rankings.php';
 
 function search_item_has_product_source(array $item): bool
 {
-    if (array_key_exists('item_source', $item)) {
-        return (string)($item['item_source'] ?? '') === 'fanza_product';
+    if ((string)($item['item_source'] ?? '') === 'fanza_product') {
+        return true;
     }
 
     foreach (['affiliate_url', 'service_code', 'floor_code', 'sample_movie_url_476', 'sample_movie_url_560', 'sample_movie_url_644', 'sample_movie_url_720'] as $key) {
@@ -31,6 +32,83 @@ function search_item_has_product_source(array $item): bool
     }
 
     return false;
+}
+
+function search_relation_checks(string $term, int $termIndex, array &$params): array
+{
+    $relations = [
+        ['table' => 'item_actresses', 'column' => 'actress_name'],
+        ['table' => 'item_genres', 'column' => 'genre_name'],
+        ['table' => 'item_makers', 'column' => 'maker_name'],
+        ['table' => 'item_labels', 'column' => 'label_name'],
+        ['table' => 'item_series', 'column' => 'series_name'],
+        ['table' => 'item_directors', 'column' => 'director_name'],
+        ['table' => 'item_authors', 'column' => 'author_name'],
+    ];
+    $checks = [];
+
+    $like = '%' . addcslashes($term, '\%_') . '%';
+    foreach ($relations as $relationIndex => $relation) {
+        $table = $relation['table'];
+        $column = $relation['column'];
+        if (!db_table_exists($table) || !db_column_exists($table, $column)) {
+            continue;
+        }
+
+        $joins = [];
+        if (db_column_exists($table, 'item_id')) {
+            $joins[] = 'r.item_id = items.id';
+        }
+        if (db_column_exists($table, 'content_id')) {
+            $joins[] = 'r.content_id = items.content_id';
+        }
+        if ($joins === []) {
+            continue;
+        }
+
+        $likeParam = ':q_relation_' . $termIndex . '_' . $relationIndex;
+        $params[$likeParam] = $like;
+        $checks[] = 'EXISTS (SELECT 1 FROM `' . $table . '` r'
+            . ' WHERE (' . implode(' OR ', $joins) . ')'
+            . ' AND r.`' . $column . '` LIKE ' . $likeParam . " ESCAPE '\\\\')";
+    }
+
+    return $checks;
+}
+
+function search_exact_relation_check(string $type, string $param): string
+{
+    $relations = [
+        'actress' => ['table' => 'item_actresses', 'column' => 'actress_name'],
+        'genre' => ['table' => 'item_genres', 'column' => 'genre_name'],
+        'maker' => ['table' => 'item_makers', 'column' => 'maker_name'],
+        'label' => ['table' => 'item_labels', 'column' => 'label_name'],
+        'series' => ['table' => 'item_series', 'column' => 'series_name'],
+    ];
+    if (!isset($relations[$type])) {
+        return '';
+    }
+
+    $table = $relations[$type]['table'];
+    $column = $relations[$type]['column'];
+    if (!db_table_exists($table) || !db_column_exists($table, $column)) {
+        return '';
+    }
+
+    $joins = [];
+    if (db_column_exists($table, 'item_id')) {
+        $joins[] = 'r.item_id = items.id';
+    }
+    if (db_column_exists($table, 'content_id')) {
+        $joins[] = 'r.content_id = items.content_id';
+    }
+    if ($joins === []) {
+        return '';
+    }
+
+    return 'EXISTS (SELECT 1 FROM `' . $table . '` r'
+        . ' WHERE (' . implode(' OR ', $joins) . ')'
+        . ' AND r.`' . $column . '` = ' . $param . ')';
 }
 
 function search_item_raw(array $item): array
@@ -55,7 +133,87 @@ function search_item_affiliate_url(array $item): string
     return trim((string)($raw['affiliateURL'] ?? ''));
 }
 
-function search_item_matches_partner_rss(array $item): bool
+function search_partner_rss_lookup(array $items): ?array
+{
+    $titles = [];
+    $urls = [];
+    $images = [];
+
+    foreach ($items as $item) {
+        $title = trim(pcf_item_title($item));
+        $url = trim((string)($item['url'] ?? ''));
+        $affiliateUrl = search_item_affiliate_url($item);
+        $imageSmall = trim((string)($item['image_small'] ?? ''));
+        $imageLarge = trim((string)($item['image_large'] ?? ''));
+
+        if ($title !== '') {
+            $titles[$title] = true;
+        }
+        foreach ([$url, $affiliateUrl] as $candidateUrl) {
+            if ($candidateUrl !== '') {
+                $urls[$candidateUrl] = true;
+            }
+        }
+        foreach ([$imageSmall, $imageLarge] as $candidateImage) {
+            if ($candidateImage !== '') {
+                $images[$candidateImage] = true;
+            }
+        }
+    }
+
+    $where = [];
+    $params = [];
+    foreach ([
+        'title' => array_keys($titles),
+        'url' => array_keys($urls),
+        'image_url' => array_keys($images),
+    ] as $column => $values) {
+        if ($values === []) {
+            continue;
+        }
+
+        $placeholders = [];
+        foreach ($values as $index => $value) {
+            $placeholder = ':rss_' . $column . '_' . $index;
+            $placeholders[] = $placeholder;
+            $params[$placeholder] = $value;
+        }
+        $where[] = $column . ' IN (' . implode(', ', $placeholders) . ')';
+    }
+
+    if ($where === []) {
+        return ['titles' => [], 'urls' => [], 'images' => []];
+    }
+
+    try {
+        $stmt = db()->prepare(
+            'SELECT title, url, image_url FROM rss_items WHERE ' . implode(' OR ', $where)
+        );
+        $stmt->execute($params);
+
+        $lookup = ['titles' => [], 'urls' => [], 'images' => []];
+        foreach ($stmt->fetchAll() ?: [] as $row) {
+            $title = trim((string)($row['title'] ?? ''));
+            $url = trim((string)($row['url'] ?? ''));
+            $image = trim((string)($row['image_url'] ?? ''));
+            if ($title !== '') {
+                $lookup['titles'][$title] = true;
+            }
+            if ($url !== '') {
+                $lookup['urls'][$url] = true;
+            }
+            if ($image !== '') {
+                $lookup['images'][$image] = true;
+            }
+        }
+
+        return $lookup;
+    } catch (Throwable) {
+        return null;
+    }
+}
+
+function search_item_matches_partner_rss(array $item, ?array $lookup = null): bool
 {
     $title = trim(pcf_item_title($item));
     $url = trim((string)($item['url'] ?? ''));
@@ -65,6 +223,14 @@ function search_item_matches_partner_rss(array $item): bool
 
     if ($title === '' && $url === '' && $affiliateUrl === '' && $imageSmall === '' && $imageLarge === '') {
         return false;
+    }
+
+    if ($lookup !== null) {
+        return isset($lookup['titles'][$title])
+            || isset($lookup['urls'][$url])
+            || isset($lookup['urls'][$affiliateUrl])
+            || isset($lookup['images'][$imageSmall])
+            || isset($lookup['images'][$imageLarge]);
     }
 
     try {
@@ -159,9 +325,9 @@ function search_item_matches_query(array $item, string $query): bool
     return false;
 }
 
-function search_item_is_displayable(array $item): bool
+function search_item_is_displayable(array $item, ?array $rssLookup = null): bool
 {
-    if (search_item_matches_partner_rss($item)) {
+    if (search_item_matches_partner_rss($item, $rssLookup)) {
         return false;
     }
 
@@ -180,7 +346,7 @@ function search_item_is_displayable(array $item): bool
     return true;
 }
 
-function search_fetch_items(string $query, int $limit, int $offset): array
+function search_fetch_items(string $query, int $limit, int $offset, string $exactType = ''): array
 {
     $query = trim($query);
     if ($query === '') {
@@ -193,28 +359,33 @@ function search_fetch_items(string $query, int $limit, int $offset): array
     }
 
     $params = [];
-    $termWhere = [];
-    foreach ($terms as $index => $term) {
-        $titleParam = ':q_title_' . $index;
-        $rawParam = ':q_raw_json_' . $index;
-        $contentParam = ':q_content_id_' . $index;
-        $productParam = ':q_product_id_' . $index;
-        $like = '%' . addcslashes($term, '\%_') . '%';
-        $params[$titleParam] = $like;
-        $params[$rawParam] = $like;
-        $params[$contentParam] = $term;
-        $params[$productParam] = $term;
-        $termWhere[] = "(title LIKE {$titleParam} ESCAPE '\\\\' OR raw_json LIKE {$rawParam} ESCAPE '\\\\' OR content_id = {$contentParam} OR product_id = {$productParam})";
+    $exactParam = ':q_exact';
+    $exactCheck = $exactType !== '' ? search_exact_relation_check($exactType, $exactParam) : '';
+    if ($exactCheck !== '') {
+        $params[$exactParam] = $query;
+        $whereSql = $exactCheck;
+    } else {
+        $termWhere = [];
+        foreach ($terms as $index => $term) {
+            $titleParam = ':q_title_' . $index;
+            $contentParam = ':q_content_id_' . $index;
+            $productParam = ':q_product_id_' . $index;
+            $like = '%' . addcslashes($term, '\%_') . '%';
+            $params[$titleParam] = $like;
+            $params[$contentParam] = $term;
+            $params[$productParam] = $term;
+            $termChecks = [
+                "title LIKE {$titleParam} ESCAPE '\\\\'",
+                "content_id = {$contentParam}",
+                "product_id = {$productParam}",
+                ...search_relation_checks($term, $index, $params),
+            ];
+            $termWhere[] = '(' . implode(' OR ', $termChecks) . ')';
+        }
+        $whereSql = '(' . implode(' OR ', $termWhere) . ')';
     }
-    $whereSql = '(' . implode(' OR ', $termWhere) . ')';
-    $sourceWhere = function_exists('items_product_source_where') ? items_product_source_where() : '';
-    if ($sourceWhere !== '') {
-        $whereSql .= ' AND ' . $sourceWhere;
-    }
+    $whereSql = '(' . $whereSql . ') AND ' . items_front_release_where();
     $orderSqlCandidates = [
-        'view_count DESC, release_date DESC, id DESC',
-        'view_count DESC, date_published DESC, id DESC',
-        'view_count DESC, id DESC',
         'release_date DESC, id DESC',
         'date_published DESC, id DESC',
         'updated_at DESC, id DESC',
@@ -243,7 +414,11 @@ function search_fetch_items(string $query, int $limit, int $offset): array
                 }
 
                 $rawFetched = count($chunk);
-                $chunk = array_values(array_filter($chunk, static fn(array $row): bool => search_item_matches_query($row, $query) && search_item_is_displayable($row)));
+                $rssLookup = search_partner_rss_lookup($chunk);
+                $chunk = array_values(array_filter(
+                    $chunk,
+                    static fn(array $row): bool => search_item_is_displayable($row, $rssLookup)
+                ));
                 $collected = dedupe_items_by_key(array_merge($collected, $chunk));
                 if (count($collected) >= $targetCount) {
                     break;
@@ -256,7 +431,8 @@ function search_fetch_items(string $query, int $limit, int $offset): array
             }
 
             return array_slice($collected, $offset, $limit + 1);
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            error_log('public/search.php failed: ' . $exception->getMessage());
         }
     }
 
@@ -264,52 +440,100 @@ function search_fetch_items(string $query, int $limit, int $offset): array
 }
 
 $searchQuery = safe_str($_GET['q'] ?? '', 200);
-$page = normalize_int((int)($_GET['page'] ?? 1), 1, 100000);
-$limit = (int)(app_config()['pagination']['per_page'] ?? 24);
-$offset = ($page - 1) * $limit;
-$searchRows = search_fetch_items($searchQuery, $limit, $offset);
+$searchType = safe_str($_GET['type'] ?? '', 20);
+if (!in_array($searchType, ['actress', 'genre', 'maker', 'label', 'series'], true)) {
+    $searchType = '';
+}
+$searchPage = normalize_int((int)($_GET['page'] ?? 1), 1, 100000);
+$limit = 32;
+$offset = ($searchPage - 1) * $limit;
+$searchRows = search_fetch_items($searchQuery, $limit, $offset, $searchType);
 [$searchItems, $searchHasNext] = paginate_items($searchRows, $limit);
+
+$searchRankingPeriod = trim((string)get('rank_period', 'daily'));
+$searchRankingTabs = [
+    'daily' => ['label' => '本日'],
+    'weekly' => ['label' => '週間'],
+    'monthly' => ['label' => '月間'],
+    'yearly' => ['label' => '年間'],
+];
+if (!isset($searchRankingTabs[$searchRankingPeriod])) {
+    $searchRankingPeriod = 'daily';
+}
+$searchRankingRows = $searchQuery !== ''
+    ? pcf_public_weighted_ranking('items', $searchRankingPeriod)
+    : [];
+$searchRankingTabUrlBuilder = static function (string $period) use ($searchQuery, $searchType, $searchPage): string {
+    $query = [
+        'q' => $searchQuery,
+        'rank_period' => $period,
+    ];
+    if ($searchType !== '') {
+        $query['type'] = $searchType;
+    }
+    if ($searchPage > 1) {
+        $query['page'] = $searchPage;
+    }
+    return public_url('search.php') . '?' . http_build_query($query) . '#access-ranking';
+};
+$searchRankingRowUrlBuilder = static function (array $row): string {
+    $itemId = (int)($row['id'] ?? 0);
+    return $itemId > 0 ? public_url('item.php?id=' . $itemId) : '';
+};
 
 $title = '検索結果';
 $pageDescription = $searchQuery !== '' ? mb_strimwidth('「' . $searchQuery . '」の商品検索結果です。', 0, 150, '…', 'UTF-8') : 'キーワードを入力して商品を検索できます。';
-$robotsMeta = 'noindex,follow';
 $canonicalQuery = [];
 if ($searchQuery !== '') {
     $canonicalQuery['q'] = $searchQuery;
 }
-if ($page > 1) {
-    $canonicalQuery['page'] = $page;
+if ($searchType !== '') {
+    $canonicalQuery['type'] = $searchType;
+}
+if ($searchPage > 1) {
+    $canonicalQuery['page'] = $searchPage;
 }
 $canonicalUrl = public_url('search.php') . ($canonicalQuery !== [] ? '?' . http_build_query($canonicalQuery) : '');
-if ($page > 1) {
-    $relPrev = public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'page' => $page - 1]);
+if ($searchPage > 1) {
+    $relPrev = public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'type' => $searchType, 'page' => $searchPage - 1]);
 }
 if ($searchHasNext) {
-    $relNext = public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'page' => $page + 1]);
+    $relNext = public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'type' => $searchType, 'page' => $searchPage + 1]);
 }
 require __DIR__ . '/partials/header.php';
 ?>
+<?php pcf_render_sample_movie_modal(); ?>
 <?php pcf_render_hero('検索結果', $searchQuery !== '' ? '「' . $searchQuery . '」の商品検索結果です。' : 'キーワードを入力して商品を検索できます。'); ?>
 
 <?php if ($searchQuery === ''): ?>
   <?php pcf_render_empty('検索キーワードを入力してください。'); ?>
 <?php elseif ($searchItems !== []): ?>
-  <section class="pcf-related-grid">
+  <section class="pcf-related-grid pinkclub-fl-related-grid">
     <?php foreach ($searchItems as $item): ?>
-      <?php pcf_render_item_card(is_array($item) ? $item : []); ?>
+      <?php pcf_render_item_card(is_array($item) ? $item : [], 180, true); ?>
     <?php endforeach; ?>
   </section>
   <nav class="pcf-pagination" aria-label="ページネーション">
-    <?php if ($page > 1): ?>
-      <a class="pcf-pagination__link" href="<?= e(public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'page' => $page - 1])) ?>">前へ</a>
+    <?php if ($searchPage > 1): ?>
+      <a class="pcf-pagination__link" href="<?= e(public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'type' => $searchType, 'page' => $searchPage - 1])) ?>">前へ</a>
     <?php endif; ?>
-    <span class="pcf-pagination__link is-current"><?= e((string)$page) ?></span>
+    <span class="pcf-pagination__link is-current"><?= e((string)$searchPage) ?></span>
     <?php if ($searchHasNext): ?>
-      <a class="pcf-pagination__link" href="<?= e(public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'page' => $page + 1])) ?>">次へ</a>
+      <a class="pcf-pagination__link" href="<?= e(public_url('search.php') . '?' . http_build_query(['q' => $searchQuery, 'type' => $searchType, 'page' => $searchPage + 1])) ?>">次へ</a>
     <?php endif; ?>
   </nav>
 <?php else: ?>
   <?php pcf_render_empty('検索条件に一致する商品がありません。'); ?>
+<?php endif; ?>
+
+<?php if ($searchQuery !== ''): ?>
+  <?php pcf_render_item_access_ranking(
+      $searchRankingTabs,
+      $searchRankingPeriod,
+      $searchRankingTabUrlBuilder,
+      $searchRankingRows,
+      $searchRankingRowUrlBuilder
+  ); ?>
 <?php endif; ?>
 
 <?php require __DIR__ . '/partials/footer.php'; ?>
