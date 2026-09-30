@@ -67,7 +67,7 @@ require __DIR__ . '/includes/header.php';
 <section class="card">
 <h1>女優・作品 API設定</h1>
 <p><strong>自動取得と手動取得は同じ処理です。</strong></p>
-<p>1サイクルで「女優情報100件 → 女優画像10人補完 → 通常作品100件確認 → 作品未紐付け女優10人×最大10作品補完」の順に実行します。</p>
+<p>1サイクルで「女優情報100件 → 女優画像10人補完 → 通常作品100件確認 → 登録女優10人×最大10作品補完」の順に実行します。</p>
 <p><strong>作品は女優情報APIで登録済みの女優に紐付くものだけ保存・公開します。</strong> 商品APIだけを根拠に女優を増やさず、未登録人物だけの作品は保存対象外です。既存DBに残っている対象外作品も同期時に段階的に整理します。</p>
 <?php if ($message !== ''): ?><div class="admin-notice <?= $messageType === 'success' ? 'admin-notice--success' : 'admin-notice--error' ?>"><p><?= e($message) ?></p></div><?php endif; ?>
 <form method="post" class="stack" style="max-width:760px;">
