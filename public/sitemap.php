@@ -87,7 +87,6 @@ $perSitemap = 10000;
 $staticUrls = [
     [rtrim(BASE_URL, '/') . '/', 'daily', '1.0'],
     [public_url('actresses.php'), 'daily', '0.9'],
-    [public_url('amateur_actresses.php'), 'daily', '0.9'],
 ];
 $actressCount = sitemap_actress_count();
 $totalUrls = count($staticUrls) + $actressCount;
