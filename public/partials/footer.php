@@ -32,7 +32,7 @@ if ($siteName === '') {
     $siteName = trim($safeTextSetting('site.title', ''));
 }
 if ($siteName === '') {
-    $siteName = 'PinkClub-FL';
+    $siteName = 'PinkClub Actress';
 }
 
 $currentYear = (int)date('Y');
