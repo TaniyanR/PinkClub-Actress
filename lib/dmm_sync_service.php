@@ -315,7 +315,13 @@ class DmmSyncService
 
         $ids = array_keys($ids);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $stmt = $this->pdo->prepare("SELECT 1 FROM actresses WHERE dmm_id IN ({$placeholders}) AND dmm_id REGEXP '^[0-9]+
+        $stmt = $this->pdo->prepare("SELECT 1 FROM actresses WHERE dmm_id IN ({$placeholders}) AND dmm_id REGEXP '^[0-9]+$' LIMIT 1");
+        $stmt->execute($ids);
+        return (bool)$stmt->fetchColumn();
+    }
+
+    private function normalizeItemListOffset(int $offset): int
+    {
         $offset = max(1, $offset);
         return $offset > 50000 ? 1 : $offset;
     }
