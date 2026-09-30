@@ -9,19 +9,60 @@ function pca_enrich_missing_actress_images(int $limit = 100): array
 {
     $limit = max(1, min(100, $limit));
     $pdo = db();
-    $stmt = $pdo->prepare("SELECT id,dmm_id,name FROM actresses WHERE TRIM(COALESCE(name,''))<>'' AND dmm_id REGEXP '^[0-9]+$' AND COALESCE(image_large,'')='' AND COALESCE(image_small,'')='' AND COALESCE(image_url,'')='' ORDER BY updated_at DESC,id DESC LIMIT :limit");
+
+    $stmt = $pdo->prepare(
+        "SELECT id,dmm_id,name
+         FROM actresses
+         WHERE TRIM(COALESCE(name,''))<>''
+           AND dmm_id REGEXP '^[0-9]+$'
+           AND (
+             COALESCE(image_large,'')='' OR COALESCE(image_small,'')=''
+             OR COALESCE(ruby,'')='' OR COALESCE(birthday,'')=''
+             OR COALESCE(prefectures,'')='' OR COALESCE(hobby,'')=''
+             OR COALESCE(bust,'')='' OR COALESCE(cup,'')=''
+             OR COALESCE(waist,'')='' OR COALESCE(hip,'')=''
+             OR COALESCE(height,'')='' OR COALESCE(blood_type,'')=''
+           )
+         ORDER BY updated_at ASC,id ASC
+         LIMIT :limit"
+    );
     $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
     $stmt->execute();
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
     $client = dmm_client_for_type('actresses');
     $processed = 0;
     $updated = 0;
+
+    $update = $pdo->prepare(
+        "UPDATE actresses SET
+           name=:name,
+           ruby=:ruby,
+           birthday=:birthday,
+           prefectures=:prefectures,
+           hobby=:hobby,
+           bust=:bust,
+           cup=:cup,
+           waist=:waist,
+           hip=:hip,
+           height=:height,
+           blood_type=:blood_type,
+           image_url=:image,
+           image_small=:small,
+           image_large=:large,
+           updated_at=NOW()
+         WHERE id=:id"
+    );
+
     foreach ($rows as $row) {
         $dmmId = trim((string)($row['dmm_id'] ?? ''));
-        if ($dmmId === '') continue;
+        if ($dmmId === '') {
+            continue;
+        }
         $processed++;
+
         try {
-            $response = $client->searchActresses(['actress_id'=>$dmmId,'hits'=>10,'offset'=>1]);
+            $response = $client->searchActresses(['actress_id' => $dmmId, 'hits' => 10, 'offset' => 1]);
             $apiRows = DmmNormalizer::toList($response['result']['actress'] ?? []);
             $best = null;
             foreach ($apiRows as $apiRow) {
@@ -30,20 +71,44 @@ function pca_enrich_missing_actress_images(int $limit = 100): array
                     break;
                 }
             }
-            if (!is_array($best) && isset($apiRows[0]) && is_array($apiRows[0])) $best = $apiRows[0];
-            if (!is_array($best)) continue;
+            if (!is_array($best)) {
+                continue;
+            }
+
             $large = trim((string)($best['imageURL']['large'] ?? $best['image_large'] ?? ''));
             $small = trim((string)($best['imageURL']['small'] ?? $best['image_small'] ?? ''));
             $image = $large !== '' ? $large : $small;
-            if ($image === '') continue;
-            $update = $pdo->prepare('UPDATE actresses SET image_url=:image,image_small=:small,image_large=:large,updated_at=NOW() WHERE id=:id');
-            $update->execute([':image'=>$image,':small'=>$small,':large'=>$large,':id'=>(int)$row['id']]);
-            if ($update->rowCount() > 0) $updated++;
+
+            $update->execute([
+                ':name' => trim((string)($best['name'] ?? $row['name'] ?? '')),
+                ':ruby' => trim((string)($best['ruby'] ?? '')),
+                ':birthday' => trim((string)($best['birthday'] ?? '')),
+                ':prefectures' => trim((string)($best['prefectures'] ?? '')),
+                ':hobby' => trim((string)($best['hobby'] ?? '')),
+                ':bust' => trim((string)($best['bust'] ?? '')),
+                ':cup' => trim((string)($best['cup'] ?? '')),
+                ':waist' => trim((string)($best['waist'] ?? '')),
+                ':hip' => trim((string)($best['hip'] ?? '')),
+                ':height' => trim((string)($best['height'] ?? '')),
+                ':blood_type' => trim((string)($best['blood_type'] ?? '')),
+                ':image' => $image,
+                ':small' => $small,
+                ':large' => $large,
+                ':id' => (int)$row['id'],
+            ]);
+            if ($update->rowCount() > 0) {
+                $updated++;
+            }
         } catch (Throwable $e) {
-            error_log('actress image enrichment failed for ' . $dmmId . ': ' . $e->getMessage());
+            error_log('actress profile enrichment failed: ' . $e->getMessage());
         }
     }
-    return ['processed'=>$processed,'updated'=>$updated,'message'=>'女優画像を'.$processed.'人確認し、'.$updated.'人分を補完しました。'];
+
+    return [
+        'processed' => $processed,
+        'updated' => $updated,
+        'message' => '女優プロフィールを' . $processed . '人確認し、' . $updated . '人分を補完しました。',
+    ];
 }
 
 /**
