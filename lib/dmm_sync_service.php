@@ -223,14 +223,11 @@ class DmmSyncService
                 return 0;
             }
 
-            // 女優APIに登録済みの女優が出演する作品だけを保存対象にする。
-            // APIページング自体はフィルタ前の件数で進め、対象外作品が多くても途中終了しない。
             $fetchedItems = array_values(array_filter(
                 $fetchedItems,
                 fn(array $item): bool => $this->itemHasRegisteredActress($item)
             ));
             $fetchedCount = count($fetchedItems);
-
             $processedCount = 0;
             $saveItems = [];
             $saveUpdatedCount = 0;
@@ -322,8 +319,8 @@ class DmmSyncService
     }
 
     /**
-     * 商品APIだけを根拠に女優を新規登録しない。
-     * 女優情報APIですでに登録済みの通常女優IDが1人でも含まれる作品だけ許可する。
+     * 商品APIだけを根拠に女優マスタは増やさない。
+     * 女優情報APIですでに登録済みの数値DMM女優IDが1人でも含まれる作品だけ保存する。
      */
     private function itemHasRegisteredActress(array $item): bool
     {
@@ -343,13 +340,7 @@ class DmmSyncService
 
         $ids = array_keys($ids);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $stmt = $this->pdo->prepare("SELECT 1 FROM actresses WHERE dmm_id IN ({$placeholders}) AND dmm_id REGEXP '^[0-9]+$' LIMIT 1");
-        $stmt->execute($ids);
-        return (bool)$stmt->fetchColumn();
-    }
-
-    private function normalizeItemListOffset(int $offset): int
-    {
+        $stmt = $this->pdo->prepare("SELECT 1 FROM actresses WHERE dmm_id IN ({$placeholders}) AND dmm_id REGEXP '^[0-9]+
         $offset = max(1, $offset);
         return $offset > 50000 ? 1 : $offset;
     }
@@ -479,7 +470,6 @@ class DmmSyncService
     private function insertRelation(int $itemId, string $table, string $nameCol, array $rows): void
     {
         $masterMap = [
-            'item_actresses' => 'actresses',
             'item_genres' => 'genres',
             'item_makers' => 'makers',
             'item_series' => 'series_master',
@@ -524,6 +514,26 @@ class DmmSyncService
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS item_authors (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id INT UNSIGNED NOT NULL,dmm_id VARCHAR(64) NULL,author_name VARCHAR(255) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_item_author (item_id,dmm_id),CONSTRAINT fk_item_author_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS item_actors (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,item_id INT UNSIGNED NOT NULL,dmm_id VARCHAR(64) NULL,actor_name VARCHAR(255) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_item_actor (item_id,dmm_id),CONSTRAINT fk_item_actor_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS sync_job_state (job_key VARCHAR(64) PRIMARY KEY,next_offset INT NOT NULL DEFAULT 1,next_initial VARCHAR(10) NULL,last_run_at DATETIME NULL,last_success TINYINT(1) NOT NULL DEFAULT 0,last_message TEXT NULL,lock_until DATETIME NULL,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+        $actressColumns = [];
+        $actressStmt = $this->pdo->query('SHOW COLUMNS FROM actresses');
+        foreach (($actressStmt ? $actressStmt->fetchAll(PDO::FETCH_ASSOC) : []) as $col) {
+            $actressColumns[(string)($col['Field'] ?? '')] = true;
+        }
+        $actressProfileColumns = [
+            'hobby' => 'VARCHAR(255) NULL AFTER prefectures',
+            'bust' => 'VARCHAR(32) NULL AFTER hobby',
+            'cup' => 'VARCHAR(32) NULL AFTER bust',
+            'waist' => 'VARCHAR(32) NULL AFTER cup',
+            'hip' => 'VARCHAR(32) NULL AFTER waist',
+            'height' => 'VARCHAR(32) NULL AFTER hip',
+            'blood_type' => 'VARCHAR(32) NULL AFTER height',
+        ];
+        foreach ($actressProfileColumns as $column => $definition) {
+            if (!isset($actressColumns[$column])) {
+                $this->pdo->exec("ALTER TABLE actresses ADD COLUMN {$column} {$definition}");
+            }
+        }
 
         $itemColumns = [];
         $itemStmt = $this->pdo->query('SHOW COLUMNS FROM items');
