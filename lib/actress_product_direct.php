@@ -70,16 +70,6 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
     // 既存DBに同名の別ID商品がある場合は、対象女優へだけ関係を補完する。
     $copied = pca_direct_copy_existing_products_by_same_name($dmmId, $actressName, 200);
     $existingItemCount = pca_product_coverage_count_for_dmm_id($dmmId);
-    if ($existingItemCount > 0) {
-        pca_product_coverage_save_state($actressId, $dmmId, $existingItemCount, 0, '');
-        return [
-            'api_count' => 0,
-            'new_count' => 0,
-            'saved_count' => 0,
-            'item_count' => $existingItemCount,
-            'copied_count' => $copied,
-        ];
-    }
 
     $client = dmm_client_for_type('items');
     $response = $client->fetchItems('FANZA', 'digital', 'videoa', [
@@ -93,8 +83,14 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
     $apiCount = count($items);
 
     if ($items === []) {
-        pca_product_coverage_save_state($actressId, $dmmId, 0, 0, '');
-        return ['api_count' => 0, 'new_count' => 0, 'saved_count' => 0, 'item_count' => 0, 'copied_count' => $copied];
+        pca_product_coverage_save_state($actressId, $dmmId, $existingItemCount, 0, '');
+        return [
+            'api_count' => 0,
+            'new_count' => 0,
+            'saved_count' => 0,
+            'item_count' => $existingItemCount,
+            'copied_count' => $copied,
+        ];
     }
 
     $pdo = db();
