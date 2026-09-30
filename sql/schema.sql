@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS actresses (
   ruby VARCHAR(255) NULL,
   birthday VARCHAR(20) NULL,
   prefectures VARCHAR(255) NULL,
+  hobby VARCHAR(255) NULL,
+  bust VARCHAR(32) NULL,
+  cup VARCHAR(32) NULL,
+  waist VARCHAR(32) NULL,
+  hip VARCHAR(32) NULL,
+  height VARCHAR(32) NULL,
+  blood_type VARCHAR(32) NULL,
   image_url TEXT NULL,
   image_small TEXT NULL,
   image_large TEXT NULL,
@@ -122,6 +129,21 @@ CREATE TABLE IF NOT EXISTS item_actresses (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_item_actresses_dmm_item (dmm_id, item_id),
   CONSTRAINT fk_item_actress_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS actress_product_sync_state (
+  actress_id INT UNSIGNED NOT NULL PRIMARY KEY,
+  dmm_id VARCHAR(64) NOT NULL,
+  next_offset INT NOT NULL DEFAULT 1,
+  is_complete TINYINT(1) NOT NULL DEFAULT 0,
+  checked_at DATETIME NULL,
+  last_item_count INT NOT NULL DEFAULT 0,
+  last_api_count INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(500) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_actress_product_sync_checked (checked_at),
+  INDEX idx_actress_product_sync_complete_checked (is_complete, checked_at),
+  CONSTRAINT fk_actress_product_sync_actress FOREIGN KEY (actress_id) REFERENCES actresses(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS item_genres (
