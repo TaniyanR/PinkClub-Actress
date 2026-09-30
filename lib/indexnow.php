@@ -46,7 +46,8 @@ function pcf_indexnow_valid_url(string $url): bool
         return false;
     }
 
-    // FL has no actress/genre/maker individual pages. Queue canonical routes only.
+    // PinkClub-Actress はTOP・女優一覧・女優個別をIndexNow対象にする。
+    // 商品詳細は購入ページへのリダイレクトなのでIndexNowへ送らない。
     $path = (string)($parts['path'] ?? '');
     $basePath = rtrim((string)parse_url(public_url('index.php'), PHP_URL_PATH), '/');
     $prefix = $basePath === '' ? '' : (str_ends_with($basePath, '/index.php') ? substr($basePath, 0, -10) : $basePath);
@@ -58,9 +59,15 @@ function pcf_indexnow_valid_url(string $url): bool
     if ($route === '/' && $query === []) {
         return true;
     }
-    if ($route === '/item.php') {
+    if ($route === '/actresses.php' && $query === []) {
+        return true;
+    }
+    if ($route === '/actress.php') {
         return array_keys($query) === ['id'] && is_string($query['id'])
             && preg_match('/^[1-9][0-9]*$/D', $query['id']) === 1;
+    }
+    if ($route === '/items.php' && $query === []) {
+        return true;
     }
     return $route === '/page.php' && array_keys($query) === ['slug'] && is_string($query['slug'])
         && preg_match('/^[A-Za-z0-9_-]{1,120}$/D', $query['slug']) === 1;
@@ -94,7 +101,20 @@ function pcf_indexnow_item_changed(int $id): void
         if ($state->fetchColumn() === $hash) {
             return;
         }
-        pcf_indexnow_enqueue(public_url('item.php') . '?id=' . $id);
+        $actressStmt = db()->prepare(
+            "SELECT DISTINCT a.id
+             FROM item_actresses ia
+             INNER JOIN actresses a ON a.dmm_id = ia.dmm_id
+             WHERE ia.item_id = ?
+               AND a.dmm_id REGEXP '^[0-9]+$'"
+        );
+        $actressStmt->execute([$id]);
+        foreach ($actressStmt->fetchAll(PDO::FETCH_COLUMN) ?: [] as $actressId) {
+            pcf_indexnow_enqueue(public_url('actress.php') . '?id=' . (int)$actressId);
+        }
+        pcf_indexnow_enqueue(public_url('actresses.php'));
+        pcf_indexnow_enqueue(rtrim((string)BASE_URL, '/') . '/');
+
         db()->prepare('INSERT INTO indexnow_item_state (item_id,fingerprint) VALUES (?,?) ON DUPLICATE KEY UPDATE fingerprint=VALUES(fingerprint)')
             ->execute([$id, $hash]);
     } catch (Throwable $e) {
@@ -216,15 +236,26 @@ function pcf_indexnow_backfill(): int
     if (!db_table_exists('indexnow_queue')) {
         return 0;
     }
-    require_once __DIR__ . '/repository.php';
-    $key = 'indexnow.backfill.' . substr(hash('sha256', pcf_indexnow_origin()), 0, 16);
+
+    $key = 'indexnow.backfill.actresses.' . substr(hash('sha256', pcf_indexnow_origin()), 0, 16);
     $cursor = max(0, (int)setting_get($key, '0'));
-    $stmt = db()->prepare('SELECT id FROM items WHERE id > ? AND ' . items_front_release_where() . ' ORDER BY id LIMIT 1000');
+    $stmt = db()->prepare(
+        "SELECT id
+         FROM actresses
+         WHERE id > ?
+           AND dmm_id REGEXP '^[0-9]+$'
+           AND TRIM(COALESCE(name,'')) <> ''
+         ORDER BY id
+         LIMIT 1000"
+    );
     $stmt->execute([$cursor]);
-    $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    $ids = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
     foreach ($ids as $id) {
-        pcf_indexnow_enqueue(public_url('item.php') . '?id=' . (int)$id);
+        pcf_indexnow_enqueue(public_url('actress.php') . '?id=' . (int)$id);
     }
+    pcf_indexnow_enqueue(public_url('actresses.php'));
+    pcf_indexnow_enqueue(rtrim((string)BASE_URL, '/') . '/');
+
     if ($ids !== []) {
         setting_set($key, (string)end($ids));
     }
