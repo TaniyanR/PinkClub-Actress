@@ -105,7 +105,6 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
     );
     $exists = $pdo->prepare('SELECT id FROM items WHERE content_id=:content_id LIMIT 1');
     $insertRelation = $pdo->prepare('INSERT IGNORE INTO item_actresses(item_id,dmm_id,actress_name) VALUES(:item_id,:dmm_id,:name)');
-    $upsertActress = $pdo->prepare('INSERT INTO actresses(dmm_id,name,updated_at) VALUES(:dmm_id,:name,NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),updated_at=NOW()');
 
     $pdo->beginTransaction();
     try {
@@ -171,8 +170,13 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
                 if ($performerId === '') {
                     $performerId = 'name:' . sha1(mb_strtolower($performerName, 'UTF-8'));
                 }
-                $insertRelation->execute([':item_id' => $itemId, ':dmm_id' => $performerId, ':name' => $performerName]);
-                $upsertActress->execute([':dmm_id' => $performerId, ':name' => $performerName]);
+                // 商品APIだけを根拠に女優マスタは増やさない。
+                // 女優APIですでに登録済みのIDだけ、共演者関係として保存する。
+                $registered = $pdo->prepare('SELECT 1 FROM actresses WHERE dmm_id=:dmm_id AND dmm_id REGEXP \'^[0-9]+$\' LIMIT 1');
+                $registered->execute([':dmm_id' => $performerId]);
+                if ($registered->fetchColumn()) {
+                    $insertRelation->execute([':item_id' => $itemId, ':dmm_id' => $performerId, ':name' => $performerName]);
+                }
             }
 
             // 女優ID指定検索そのものを根拠に、対象女優との関係を必ず保存する。
@@ -262,4 +266,43 @@ function pca_direct_sync_product_batch(int $actressLimit = 10, int $hitsPerActre
         'coverage_before' => $coverageBefore,
         'coverage_after' => $coverageAfter,
     ];
+}
+
+
+/**
+ * 女優APIで登録済みの通常女優に紐付かない作品を段階的に削除する。
+ * 既存DBを一度に全走査・全削除せず、同期サイクルごとに上限件数だけ処理する。
+ */
+function pca_prune_unregistered_actress_items(int $limit = 500): int
+{
+    $limit = max(1, min(2000, $limit));
+    $pdo = db();
+
+    try {
+        $stmt = $pdo->query(
+            "SELECT i.id
+             FROM items i
+             WHERE NOT EXISTS (
+                 SELECT 1
+                 FROM item_actresses ia
+                 INNER JOIN actresses a ON a.dmm_id = ia.dmm_id
+                 WHERE ia.item_id = i.id
+                   AND a.dmm_id REGEXP '^[0-9]+$'
+             )
+             ORDER BY i.id ASC
+             LIMIT {$limit}"
+        );
+        $ids = array_values(array_filter(array_map('intval', $stmt ? ($stmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [])));
+        if ($ids === []) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $delete = $pdo->prepare("DELETE FROM items WHERE id IN ({$placeholders})");
+        $delete->execute($ids);
+        return $delete->rowCount();
+    } catch (Throwable $e) {
+        error_log('unregistered actress item prune failed: ' . $e->getMessage());
+        return 0;
+    }
 }
