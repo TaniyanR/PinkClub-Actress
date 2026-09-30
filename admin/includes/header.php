@@ -13,7 +13,7 @@ $menuGroups = [
         ['label' => '個人設定', 'file' => 'personal_settings.php'],
         ['label' => '広告コード', 'file' => 'ads_code.php'],
         ['label' => 'コード設定', 'file' => 'code_settings.php'],
-        ['label' => '検索設定', 'file' => 'search_settings.php'],
+        ['label' => 'SEO・IndexNow', 'file' => 'search_settings.php'],
         ['label' => 'cron設定', 'file' => 'cron_settings.php'],
     ]],
     ['label' => 'リンク設定', 'children' => [
@@ -63,6 +63,8 @@ $faviconType = strtolower((string)pathinfo($faviconPath, PATHINFO_EXTENSION)) ==
     <link rel="apple-touch-icon" href="<?= e($faviconUrl) ?>">
   <?php endif; ?>
   <link rel="stylesheet" href="<?= e(asset_url('css/style.css')) ?>">
+  <link rel="stylesheet" href="<?= e(asset_url('css/admin-enhancements.css')) ?>">
+  <link rel="stylesheet" href="<?= e(asset_url('css/admin-auto-mobile.css')) ?>">
 </head>
 <body class="admin-page">
 <input class="admin-menu-toggle" type="checkbox" id="admin-menu-toggle" hidden>
