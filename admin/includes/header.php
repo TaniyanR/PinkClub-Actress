@@ -13,6 +13,7 @@ $menuGroups = [
         ['label' => '個人設定', 'file' => 'personal_settings.php'],
         ['label' => '広告コード', 'file' => 'ads_code.php'],
         ['label' => 'コード設定', 'file' => 'code_settings.php'],
+        ['label' => '検索設定', 'file' => 'search_settings.php'],
         ['label' => 'cron設定', 'file' => 'cron_settings.php'],
     ]],
     ['label' => 'リンク設定', 'children' => [
@@ -24,6 +25,7 @@ $menuGroups = [
         ['label' => '自動設定', 'file' => 'api_auto.php'],
     ]],
     ['label' => 'アクセス解析', 'children' => [
+        ['label' => '総合', 'file' => 'access_analytics_v2.php'],
         ['label' => 'グラフ', 'file' => 'analytics.php?tab=graph'],
         ['label' => 'リンク元', 'file' => 'analytics.php?tab=referrer'],
         ['label' => 'クリック先', 'file' => 'analytics.php?tab=destination'],
