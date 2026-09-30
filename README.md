@@ -1,146 +1,122 @@
 # PinkClub-Actress
 
-女優を入口にFANZA作品を探す、女優特化型のアフィリエイトサイトです。フロントデザインと管理機能は [PinkClub-FL](https://github.com/TaniyanR/PinkClub-FL) をベースにしています。
+PinkClub-Actress は、FANZAの**女優を入口**にプロフィールと出演作品を紹介する女優特化サイトです。
 
-## 公開サイトの構成
+共通UI・管理・SEO・RSS・アクセス解析などの基盤は [PinkClub-FL](https://github.com/TaniyanR/PinkClub-FL) を基準にし、女優取得と作品取得だけをPinkClub-Actress向けに構成します。
 
-グローバルメニューは次の3つに絞ります。
+## データ方針
 
-- TOP
-- 女優一覧
-- しろうと女性一覧
+### 女優マスタ
 
-### TOP
+女優登録の正データは **FANZA ActressSearch（女優情報API）だけ**です。
 
-- 女優写真をメインに表示
-- 女優としろうと女性を混在させてランダム表示
-- PCは横6列 × 縦20行
-- 1ページ最大120名
-- 写真・名前から女優個別ページへ移動
-- 同じ女性が両方の対象作品に登場する場合は重複表示しない
-- 「女優ピックアップ」などの見出しは表示しない
+保存する主な情報:
 
-### 女優一覧 / しろうと女性一覧
-
-- 五十音の「あ・か・さ・た・な・は・ま・や・ら・わ」と A-Z から探せる一覧
-- 写真を丸型サムネイルで表示
-- 名前をクリックすると女優個別ページへ移動
-- しろうと女性は、しろうと動画フロアの商品との関連情報から自動分類
-
-### 女優個別ページ
-
-- 女優写真
-- 名前・よみ・誕生日・出身地など取得可能なプロフィール
-- 出演作品
-- 人気の女優ランキング
-- 商品カードの作品リンクはサイト内の商品詳細ページを作らず、FANZAの購入ページへ転送
-
-## API方針
-
-PinkClub-Actress は **女優情報APIがメイン、商品情報APIが補助** です。
-
-### メイン: FANZA 女優情報API
-
-- 女優名
-- よみ
+- DMM女優ID
+- 女優名 / よみ
 - 女優写真
 - 誕生日
 - 出身地
-- その他取得可能なプロフィール情報
+- 趣味
+- バスト / カップ / ウエスト / ヒップ
+- 身長
+- 血液型
 
-公開サイトの中心となる女優データを保存します。
+商品情報APIだけを根拠に actresses テーブルへ新しい女性を追加しません。
 
-### 補助: FANZA 商品情報API
+### 出演作品
 
-- 女優個別ページの出演作品
-- 女優 / しろうと女性の分類に必要な商品との関連情報
-- 商品カード
-- FANZA購入ページへのアフィリエイトリンク
+作品は、すでに女優情報APIで登録されている女優を起点に取得します。
 
-商品そのものを主役にはしません。
+- article=actress
+- article_id=<登録済み女優DMM ID>
+- FANZA / digital / videoa
 
-商品取得対象は `config/config.php` の `dmm.catalog_targets` で管理します。
+取得した作品はDBへ保存し、女優個別ページの商品カードとして紹介します。
 
-| site | service | floor | 用途 |
-| --- | --- | --- | --- |
-| FANZA | digital | videoa | 女優側の出演作品取得（補助） |
-| FANZA | digital | videoc | しろうと女性側の出演作品取得（補助） |
+**登録済み女優が1人も紐づかない作品は保存・公開対象にしません。**
 
-## 管理画面のAPI設定
+過去DBにそのような作品が残っていても、公開一覧・検索・ランキングでは共通フィルタにより除外します。既存データを破壊するための一括削除は行いません。
 
-API設定メニューは次の順番です。
+## 公開サイト
 
-1. 女優情報API設定
-2. 商品情報API設定（補助）
-3. 自動設定
+- TOP: 女優写真と女優名を中心に表示
+- 女優一覧: 五十音 / A-Z から探せる
+- 女優個別:
+  - 女優写真
+  - プロフィール
+  - DBに保存済みの出演作品
+  - 人気の女優ランキング
+- 商品カード: PinkClub共通カードを利用
+- 商品導線: 保存済みアフィリエイトURLを利用
 
-APIID / アフィリエイトIDは女優APIと商品APIで共通利用します。
+旧 /amateur_actresses.php は互換用に残し、女優一覧へ301リダイレクトします。
 
-## 主な機能
+## 自動取得
 
-- FANZA女優情報の取得・保存
-- FANZA商品情報の補助取得・保存
-- 複数フロアの順次取得とフロア別offset管理
-- 女優一覧・しろうと女性一覧
-- 女優プロフィール・出演作品
-- 女優アクセスランキング（日・週・月・年）
-- 商品カードからFANZA購入ページへのアフィリエイト導線
-- WordPress風の管理画面
-- API認証情報保存、テスト取得、cron自動取得
-- SEO、OGP、サイトマップ、RSS、アクセス解析
+1サイクルの基本処理:
+
+1. 女優情報APIから100人取得・更新
+2. プロフィール不足の女優を最大10人補完
+3. 登録済み女優を最大5人選択
+4. 1女優あたり最大20作品を取得・保存
+
+1サイクルの外部商品API呼び出しは最大5回です。
+
+女優ごとに商品取得offsetをDBへ保存し、同じ女優の出演作品を少しずつ蓄積します。
+
+公開ページ表示中に外部API同期は実行しません。
+
+cron:
+
+    php /path/to/PinkClub-Actress/scripts/auto_import.php
+
+## 管理画面
+
+- サイト設定
+- 広告 / コード設定
+- 相互リンク / 相互RSS
+- 女優・作品 API設定
+- 自動取得設定
+- アクセス解析
+- 固定ページ
+
+APIID / アフィリエイトIDは女優取得と作品取得で共通利用します。
+
+## 主要URL
+
+- TOP: /
+- 女優一覧: /actresses.php
+- 女優個別: /actress.php?id={ID}
+- 管理ログイン: /public/login0718.php
+- 管理トップ: /admin/index.php
+- 女優・作品 API設定: /admin/api_actresses.php
+- 自動設定: /admin/api_auto.php
 
 ## 必要環境
 
 - PHP 8.1以上
-- MySQL 8.0またはMariaDB 10.5以上
-- PDO MySQL、mbstring、JSON、cURLまたはallow_url_fopen
+- MySQL 8.0 または MariaDB 10.5以上
+- PDO MySQL
+- mbstring
+- JSON
+- cURL または allow_url_fopen
 - Apache / nginx
 - cron（自動取得を使う場合）
 
-XAMPPでも動作確認できます。
-
 ## セットアップ
 
-1. ファイル一式をサーバーへ配置します。
-2. `/public/setup_check.php` を開きます。
-3. DB情報を保存してセットアップを実行します。
-4. `/public/login0718.php` からログインします。
-5. 管理画面の「女優情報API設定」でAPI IDとアフィリエイトIDを保存します。
-6. 女優情報をテスト取得して保存します。
-7. 補助として商品情報APIを同期し、出演作品と分類用の関連データを保存します。
+1. ファイル一式を配置
+2. /public/setup_check.php を開く
+3. DB情報を保存してセットアップ
+4. /public/login0718.php からログイン
+5. 「女優・作品 API設定」でAPIID / アフィリエイトIDを保存
+6. 「今すぐ1回実行」またはcronで女優と出演作品を順次取得
 
-初期管理者情報を使用している場合は、公開前に必ず変更してください。
+DB接続情報・API認証情報・ログ・セッション情報をGitへコミットしないでください。公開環境ではHTTPSを使用してください。
 
-## 自動取得
+## API
 
-公開アクセスではAPI同期を実行しません。自動取得を使う場合はcronから実行してください。
-
-```bash
-php /path/to/PinkClub-Actress/scripts/auto_import.php
-```
-
-## 主要URL
-
-- TOP: `/`
-- 女優一覧: `/actresses.php`
-- しろうと女性一覧: `/amateur_actresses.php`
-- 女優個別: `/actress.php?id={ID}`
-- 管理ログイン: `/public/login0718.php`
-- 管理トップ: `/admin/index.php`
-- 女優情報API設定: `/admin/api_actresses.php`
-- 商品情報API設定（補助）: `/admin/api_items.php`
-
-`/item.php?id={ID}` は商品詳細ページではなく、保存済みの `affiliate_url` を優先して購入ページへ転送します。
-
-## 設定とセキュリティ
-
-- DB接続情報やAPI認証情報をGitへコミットしないでください。
-- `config.local.php`、ログ、セッション情報は公開しないでください。
-- 管理者パスワードを変更し、HTTPSで運用してください。
-- 外部URLへの転送は `http` / `https` のみ許可します。
-
-## クレジット
+女優情報・商品情報は DMM/FANZA Affiliate API を利用します。
 
 <a href="https://affiliate.dmm.com/api/" target="_blank" rel="nofollow"><img src="https://p.dmm.co.jp/p/affiliate/web_service/r18_135_17.gif" alt="WEB SERVICE BY FANZA" width="135" height="17"></a>
-
-女優情報・商品情報はDMM/FANZA Affiliate APIを利用します。
