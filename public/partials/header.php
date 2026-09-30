@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_helpers.php';
+require_once __DIR__ . '/../../lib/seo_metadata.php';
 
 $pageType = function_exists('ad_current_page_type') ? ad_current_page_type() : 'home';
 $safeTextSetting = static function (string $key, string $default = ''): string {
@@ -47,24 +48,53 @@ $titleText = (string)($title ?? $pageTitle ?? $siteName);
 $titleBaseText = trim($titleText);
 $isHomeTitle = $titleBaseText === '' || $titleBaseText === 'トップ' || $titleBaseText === $siteName;
 $titleText = $isHomeTitle ? ($tagline !== '' ? $siteName . ' - ' . $tagline : $siteName) : $titleBaseText . ' | ' . $siteName;
-$logoUrl = $logoPath !== '' ? public_url($logoPath) : '';
-$faviconUrl = $faviconPath !== '' ? public_versioned_url($faviconPath) : '';
+$logoUrl = function_exists('site_media_url_or_legacy')
+    ? site_media_url_or_legacy('logo', $logoPath)
+    : ($logoPath !== '' ? public_url($logoPath) : '');
+$faviconUrl = function_exists('site_media_url_or_legacy')
+    ? site_media_url_or_legacy('favicon', $faviconPath)
+    : ($faviconPath !== '' ? public_versioned_url($faviconPath) : '');
 $faviconExt = strtolower((string)pathinfo($faviconPath, PATHINFO_EXTENSION));
 $faviconType = $faviconExt === 'png' ? 'image/png' : 'image/x-icon';
+if (function_exists('site_media_meta_get')) {
+    $faviconMedia = site_media_meta_get('favicon');
+    if (is_array($faviconMedia) && trim((string)($faviconMedia['mime_type'] ?? '')) !== '') {
+        $faviconType = trim((string)$faviconMedia['mime_type']);
+    }
+}
 $canRenderAd = function_exists('render_ad');
 $descriptionText = (string)($pageDescription ?? '');
 if ($descriptionText === '') {
     $descriptionText = $tagline;
 }
+$headerScriptName = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+$descriptionText = pcf_meta_description(
+    $descriptionText,
+    $titleBaseText !== '' ? $titleBaseText : $siteName,
+    $headerScriptName,
+    $siteName
+);
 $canonicalHref = isset($canonicalUrl) && is_string($canonicalUrl) && $canonicalUrl !== '' ? $canonicalUrl : '';
 $ogUrl = isset($ogUrl) && is_string($ogUrl) && $ogUrl !== '' ? $ogUrl : ($canonicalHref !== '' ? $canonicalHref : public_url(basename((string)($_SERVER['SCRIPT_NAME'] ?? 'index.php'))));
 $ogType = isset($ogType) && is_string($ogType) && $ogType !== '' ? $ogType : 'website';
 $ogImage = isset($ogImage) && is_string($ogImage) ? trim($ogImage) : '';
-if ($ogImage === '' && $logoPath !== '') {
+if ($ogImage === '' && function_exists('site_media_public_url')) {
+    $ogImage = site_media_public_url('ogp');
+}
+if ($ogImage === '' && $logoUrl !== '') {
     $ogImage = $logoUrl;
 }
-if ($ogImage !== '' && !str_starts_with($ogImage, 'http://') && !str_starts_with($ogImage, 'https://') && !str_starts_with($ogImage, '/')) {
+if (str_starts_with($ogImage, '//')) {
+    $baseScheme = strtolower((string)(parse_url(BASE_URL, PHP_URL_SCHEME) ?: 'https'));
+    $ogImage = ($baseScheme === 'http' ? 'http:' : 'https:') . $ogImage;
+} elseif (str_starts_with($ogImage, '/')) {
+    $ogImage = app_url($ogImage);
+} elseif ($ogImage !== '' && !str_starts_with($ogImage, 'http://') && !str_starts_with($ogImage, 'https://')) {
     $ogImage = asset_url($ogImage);
+}
+$socialImageItemId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+if ($headerScriptName === 'item.php' && is_int($socialImageItemId) && $socialImageItemId > 0) {
+    $ogImage = public_url('social-image.php') . '?id=' . rawurlencode((string)$socialImageItemId) . '&v=3';
 }
 $jsonLdText = isset($jsonLd) && is_string($jsonLd) && $jsonLd !== '' ? $jsonLd : '';
 $relPrevHref = isset($relPrev) && is_string($relPrev) && $relPrev !== '' ? $relPrev : '';
@@ -75,6 +105,8 @@ $relNextHref = isset($relNext) && is_string($relNext) && $relNext !== '' ? $relN
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="rating" content="adult">
   <title><?= e($titleText) ?></title>
   <?php if ($descriptionText !== ''): ?><meta name="description" content="<?= e($descriptionText) ?>"><?php endif; ?>
   <?php if (isset($robotsMeta) && is_string($robotsMeta) && trim($robotsMeta) !== ''): ?><meta name="robots" content="<?= e(trim($robotsMeta)) ?>"><?php endif; ?>
@@ -86,13 +118,20 @@ $relNextHref = isset($relNext) && is_string($relNext) && $relNext !== '' ? $relN
   <meta property="og:title" content="<?= e($titleText) ?>">
   <?php if ($descriptionText !== ''): ?><meta property="og:description" content="<?= e($descriptionText) ?>"><?php endif; ?>
   <meta property="og:url" content="<?= e($ogUrl) ?>">
-  <?php if ($ogImage !== ''): ?><meta property="og:image" content="<?= e($ogImage) ?>"><?php endif; ?>
+  <?php if ($ogImage !== ''): ?>
+  <meta property="og:image" content="<?= e($ogImage) ?>">
+  <?php if (str_starts_with($ogImage, 'https://')): ?><meta property="og:image:secure_url" content="<?= e($ogImage) ?>"><?php endif; ?>
+  <meta property="og:image:alt" content="<?= e($titleText) ?>">
+  <?php endif; ?>
   <meta property="og:site_name" content="<?= e($siteName) ?>">
   <meta property="og:locale" content="ja_JP">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="<?= e($titleText) ?>">
   <?php if ($descriptionText !== ''): ?><meta name="twitter:description" content="<?= e($descriptionText) ?>"><?php endif; ?>
-  <?php if ($ogImage !== ''): ?><meta name="twitter:image" content="<?= e($ogImage) ?>"><?php endif; ?>
+  <?php if ($ogImage !== ''): ?>
+  <meta name="twitter:image" content="<?= e($ogImage) ?>">
+  <meta name="twitter:image:alt" content="<?= e($titleText) ?>">
+  <?php endif; ?>
   <?php if ($jsonLdText !== ''): ?><script type="application/ld+json"><?= $jsonLdText ?></script><?php endif; ?>
   <?php if ($customHeadCode !== ''): ?>
 <?= $customHeadCode ?>
@@ -212,6 +251,7 @@ $relNextHref = isset($relNext) && is_string($relNext) && $relNext !== '' ? $relN
       <?php else: ?>
         <div class="site-title"><a href="<?= e(public_url('')) ?>" class="site-title-link"><?= e($siteName) ?></a></div>
       <?php endif; ?>
+      <div class="site-disclaimer"><strong>18+：当サイトはアダルトサイトで18歳未満の方はご利用出来ません。</strong></div>
       <div class="site-disclaimer"><strong>当サイトはアフィリエイト広告を利用しています。</strong></div>
     </div>
     <div class="header-right site-header__right">
