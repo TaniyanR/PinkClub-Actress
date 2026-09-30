@@ -33,7 +33,7 @@ $longCachePublicPages = [
 $publicPageCacheTtl = in_array($publicScriptName, $longCachePublicPages, true) ? 600 : 120;
 
 // PinkClub-Actress の主ページは女優・作品同期の結果を即時反映する。
-$actressDynamicPages = ['index.php', 'actresses.php', 'amateur_actresses.php', 'actress.php'];
+$actressDynamicPages = ['index.php', 'actresses.php', 'actress.php'];
 if (in_array($publicScriptName, $actressDynamicPages, true)) {
     header('Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
@@ -48,7 +48,6 @@ $readOnlyPublicPages = [
     'item.php',
     'search.php',
     'actresses.php',
-    'amateur_actresses.php',
     'actresses_group.php',
     'actress.php',
     'genres.php',
