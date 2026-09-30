@@ -1,5 +1,6 @@
 # Local config (secrets)
 /cache/
+/storage/
 /logs/
 /logs/*.log
 .DS_Store
@@ -10,6 +11,17 @@ vendor/
 !public/assets/vendor/**
 
 config.local.php
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+*.tmp
+*.bak
+*.old
+*.orig
+.idea/
+.vscode/
 
 !logs/.gitkeep
 !logs/
