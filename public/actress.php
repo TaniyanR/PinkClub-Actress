@@ -120,13 +120,12 @@ if (!is_array($row)) {
 
 $name = trim((string)($row['name'] ?? ''));
 $dmmId = trim((string)($row['dmm_id'] ?? ''));
-if ($name === '') {
+if ($name === '' || preg_match('/^[0-9]+$/', $dmmId) !== 1) {
     require __DIR__ . '/404.php';
 }
 
-// 通常女優としろうと女性はID形式で厳密に分離する。
-// 数値DMM女優IDを持つ人物を、同名やvideoc関係だけでしろうと扱いしない。
-$isAmateur = pca_is_synthetic_amateur_id($dmmId);
+// PinkClub-Actressの公開対象は女優情報APIで登録済みの通常女優だけ。
+$isAmateur = false;
 
 try {
     analytics_log_actress_page_view($id);
@@ -153,9 +152,7 @@ $limit = 24;
 $offset = ($page - 1) * $limit;
 
 try {
-    $loaded = $isAmateur
-        ? pca_detail_amateur_items($dmmId, $limit + 1, $offset)
-        : pca_detail_normal_items($dmmId, $name, $limit + 1, $offset);
+    $loaded = pca_detail_normal_items($dmmId, $name, $limit + 1, $offset);
 } catch (Throwable $e) {
     error_log('actress item fetch failed: ' . $e->getMessage());
     $loaded = [];
@@ -199,7 +196,7 @@ require __DIR__ . '/partials/header.php';
 
 <?php pcf_render_breadcrumbs([
     ['label' => 'トップ', 'url' => public_url('')],
-    ['label' => $isAmateur ? 'しろうと女性一覧' : '女優一覧', 'url' => public_url($isAmateur ? 'amateur_actresses.php' : 'actresses.php')],
+    ['label' => '女優一覧', 'url' => public_url('actresses.php')],
     ['label' => $name],
 ]); ?>
 
