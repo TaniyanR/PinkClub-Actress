@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/dmm_api_client.php';
 require_once __DIR__ . '/dmm_normalizer.php';
 require_once __DIR__ . '/repository.php';
+require_once __DIR__ . '/indexnow.php';
 
 class DmmSyncService
 {
@@ -333,6 +334,7 @@ class DmmSyncService
                 $exists = $this->itemExistsByContentId((string)($item['content_id'] ?? ''));
                 $itemId = $this->upsertItem($item);
                 $this->rebuildItemRelations($itemId, $item);
+                pcf_indexnow_item_changed($itemId);
                 if (function_exists('generate_tags_for_item')) {
                     generate_tags_for_item([
                         'content_id' => $item['content_id'] ?? '',
