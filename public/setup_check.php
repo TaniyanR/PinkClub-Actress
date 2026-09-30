@@ -58,21 +58,7 @@ function setup_local_config_status(): array
 
 function setup_safe_db_error(string $stage, Throwable $exception): string
 {
-    $message = $exception->getMessage();
-    if (!extension_loaded('pdo_mysql')) {
-        return $stage . 'に失敗しました。PDO MySQL拡張が有効ではない可能性があります。';
-    }
-    if (str_contains($message, 'Unknown database')) {
-        return $stage . 'に失敗しました。DBサーバーには接続できましたが、対象DBへ接続できません。DB名が存在しない可能性があります。';
-    }
-    if (str_contains($message, 'Access denied')) {
-        return $stage . 'に失敗しました。ユーザー名またはパスワードが違う、またはDBユーザーが対象DBに追加されていない可能性があります。';
-    }
-    if (str_contains($message, 'Connection refused') || str_contains($message, 'No such file or directory') || str_contains($message, 'timed out')) {
-        return $stage . 'に失敗しました。MySQLサーバーへ接続できません。DBホスト名、DBポート、MySQLサーバーの稼働状況を確認してください。';
-    }
-
-    return $stage . 'に失敗しました。DBホスト名、DBポート、データベース、ユーザー名、パスワードを確認してください。';
+    return $stage . 'に失敗しました。' . db_connection_error_message($exception);
 }
 
 function setup_test_db_config(array $db): void
@@ -85,13 +71,6 @@ function setup_test_db_config(array $db): void
     $charset = (string)($db['charset'] ?? 'utf8mb4');
 
     try {
-        $serverDsn = sprintf('mysql:host=%s;port=%d;charset=%s', $host, $port, $charset);
-        new PDO($serverDsn, $user, $pass, db_options());
-    } catch (Throwable $exception) {
-        throw new RuntimeException(setup_safe_db_error('DBサーバー接続テスト', $exception), 0, $exception);
-    }
-
-    try {
         $dbDsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=%s', $host, $port, $dbname, $charset);
         new PDO($dbDsn, $user, $pass, db_options());
     } catch (Throwable $exception) {
@@ -100,6 +79,19 @@ function setup_test_db_config(array $db): void
 }
 
 $localConfigStatus = setup_local_config_status();
+
+// 稼働済みサイトでは、未認証の設定変更をPOST処理より先に拒否する。
+$configuredDb = app_config()['db'] ?? [];
+if (is_array($configuredDb) && db_validate_config($configuredDb, true) === []) {
+    try {
+        if ((installer_status()['completed'] ?? false) === true) {
+            app_redirect(LOGIN_PATH);
+        }
+    } catch (Throwable) {
+        // DBが未完成または停止中なら、下の診断・復旧画面を表示する。
+    }
+}
+
 $csrfFailed = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_verify(post('_csrf'))) {
     unset($_SESSION['_csrf']);
@@ -125,7 +117,7 @@ if (!$csrfFailed && $_SERVER['REQUEST_METHOD'] === 'POST' && (string)post('actio
     $dbname = trim((string)post('db_name', ''));
     $user = trim((string)post('db_user', ''));
     $pass = (string)post('db_pass', '');
-    if ($host === '' || $port <= 0 || $dbname === '' || $user === '') {
+    if ($host === '' || $port <= 0 || $port > 65535 || $dbname === '' || $user === '') {
         $dbConfigError = 'DBホスト名、DBポート、データベース、ユーザー名を入力してください。';
     } elseif ($host !== 'localhost' && str_contains($dbname, '_') && $host === strtok($dbname, '_')) {
         $dbConfigError = 'DBホスト名にサーバーIDが入力されています。DBホスト名は通常 localhost です。';
@@ -211,7 +203,7 @@ $errorSummary = installer_last_error_summary();
 $logTail = installer_log_tail(30);
 csrf_token();
 $faviconPath = trim(site_setting_get('site.favicon_path', ''));
-$faviconUrl = $faviconPath !== '' ? public_versioned_url($faviconPath) : '';
+$faviconUrl = $faviconPath !== '' ? public_url($faviconPath) : '';
 $faviconType = strtolower((string)pathinfo($faviconPath, PATHINFO_EXTENSION)) === 'png' ? 'image/png' : 'image/x-icon';
 ?>
 <!doctype html>
@@ -247,7 +239,7 @@ $faviconType = strtolower((string)pathinfo($faviconPath, PATHINFO_EXTENSION)) ==
         <input type="hidden" name="action" value="save_db_config">
         <table><tbody>
           <tr><th>DBホスト名</th><td><input name="db_host" value="<?= e((string)($currentDbConfig['host'] ?? '')) ?>" required><br><small>通常 <code>localhost</code> です。サーバーIDではありません。</small></td></tr>
-          <tr><th>DBポート</th><td><input name="db_port" type="number" value="<?= e((string)($currentDbConfig['port'] ?? 3306)) ?>" required></td></tr>
+          <tr><th>DBポート</th><td><input name="db_port" type="number" min="1" max="65535" value="<?= e((string)($currentDbConfig['port'] ?? 3306)) ?>" required></td></tr>
           <tr><th>データベース</th><td><input name="db_name" value="<?= e((string)($currentDbConfig['dbname'] ?? '')) ?>" required></td></tr>
           <tr><th>ユーザー名</th><td><input name="db_user" value="<?= e((string)($currentDbConfig['user'] ?? '')) ?>" required><br><small>サーバーパネルのMySQL設定で、このユーザーを対象データベースに追加してください。</small></td></tr>
           <tr><th>パスワード</th><td><input name="db_pass" type="password" value="" autocomplete="new-password"><br><small>保存済みの場合、空欄のまま保存すると既存値を維持します。</small></td></tr>
