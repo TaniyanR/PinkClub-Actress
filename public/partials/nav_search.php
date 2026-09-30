@@ -50,7 +50,7 @@ try {
             <?php endforeach; ?>
         </div>
         <div class="site-mobile-menu__group">
-            <?php if ($siteActressCount !== null): ?><a style="color:#000;">登録女優数：<strong><?= e(number_format($siteActressCount)) ?></strong></a><?php endif; ?>
+            <?php if ($siteActressCount !== null): ?><a style="color:#000;">公開女優数：<strong><?= e(number_format($siteActressCount)) ?></strong></a><?php endif; ?>
             <?php foreach ($mobileInfoItems as $item): ?>
                 <a href="<?= e($item['href']) ?>"><?= e($item['label']) ?></a>
             <?php endforeach; ?>
