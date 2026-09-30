@@ -35,35 +35,14 @@ if ($siteName === '') {
     $siteName = 'PinkClub Actress';
 }
 
-$copyrightStartYear = (int)date('Y');
-try {
-    $pdo = db();
-    $startDate = null;
-    foreach (['date_published', 'release_date', 'created_at'] as $column) {
-        $stmt = $pdo->query("SELECT MIN(" . $column . ") FROM items WHERE " . $column . " IS NOT NULL AND " . $column . " <> ''");
-        $value = $stmt ? trim((string)$stmt->fetchColumn()) : '';
-        if ($value !== '') {
-            $startDate = $value;
-            break;
-        }
-    }
-    if ($startDate !== null) {
-        $timestamp = strtotime($startDate);
-        if ($timestamp !== false) {
-            $copyrightStartYear = (int)date('Y', $timestamp);
-        }
-    }
-} catch (Throwable $e) {
-}
 $currentYear = (int)date('Y');
-$copyrightYears = $copyrightStartYear >= $currentYear
-    ? (string)$currentYear
-    : $copyrightStartYear . '-' . $currentYear;
+$copyrightYears = site_start_year() . '-' . $currentYear;
 
 ?>
   <?php $pageType = function_exists('ad_current_page_type') ? ad_current_page_type() : 'home'; ?>
   </div>
-  <?php if (site_setting_get('link.rss_display.pc_text_bottom', '1') === '1'): ?>
+  <?php $isMobileRequest = function_exists('pcf_public_request_is_mobile') && pcf_public_request_is_mobile(); ?>
+  <?php if (!$isMobileRequest && site_setting_get('link.rss_display.pc_text_bottom', '1') === '1'): ?>
   <div class="site-main__rss only-pc">
     <?php render_shared_content_ad_row('content_bottom', $pageType); ?>
   </div>
@@ -83,7 +62,7 @@ $copyrightYears = $copyrightStartYear >= $currentYear
   <div class="site-footer__credit">
     <a href="https://affiliate.dmm.com/api/"><img src="https://p.dmm.co.jp/p/affiliate/web_service/r18_135_17.gif" width="135" height="17" alt="WEB SERVICE BY FANZA" /></a>
   </div>
-  <div class="site-footer__copy">© <?= e($copyrightYears) ?> <a href="<?= e(public_url('')) ?>"><?= e($siteName) ?></a></div>
+  <div class="site-footer__copy">Copyright ©<?= e($copyrightYears) ?> <a href="<?= e(public_url('')) ?>"><?= e($siteName) ?></a> All Rights Reserved.</div>
 </footer>
 <script>
 (function () {
@@ -253,16 +232,23 @@ $copyrightYears = $copyrightStartYear >= $currentYear
   window.__pcfSendBeacon = send;
   if (window.__pcfAnalyticsSent === true) return;
   window.__pcfAnalyticsSent = true;
-  var data = new FormData();
-  data.append('path', window.location.pathname + window.location.search);
-  data.append('referrer', document.referrer || '');
-  try {
-    var params = new URLSearchParams(window.location.search);
-    data.append('ref', params.get('ref') || '');
-  } catch (e) {
-    data.append('ref', '');
-  }
-  send('<?= e(public_url('analytics.php')) ?>', data);
+  if (navigator.webdriver === true) return;
+  var path = window.location.pathname + window.location.search;
+  var token = <?= json_encode(analytics_beacon_token((string)($_SERVER['REQUEST_URI'] ?? '/')), JSON_UNESCAPED_SLASHES) ?>;
+  window.setTimeout(function () {
+    if (document.visibilityState !== 'visible') return;
+    var data = new FormData();
+    data.append('path', path);
+    data.append('token', token);
+    data.append('referrer', document.referrer || '');
+    try {
+      var params = new URLSearchParams(window.location.search);
+      data.append('ref', params.get('ref') || '');
+    } catch (e) {
+      data.append('ref', '');
+    }
+    send('<?= e(public_url('analytics.php')) ?>', data);
+  }, 2500);
 }());
 </script>
 <?php $rankingRefreshQueue = function_exists('pcf_public_ranking_refresh_queue') ? pcf_public_ranking_refresh_queue() : []; ?>
@@ -281,5 +267,6 @@ $copyrightYears = $copyrightStartYear >= $currentYear
 }());
 </script>
 <?php endif; ?>
+<script src="<?= e(asset_url('js/analytics-engagement.js')) ?>" defer></script>
 </body>
 </html>
