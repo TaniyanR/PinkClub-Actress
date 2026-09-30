@@ -27,8 +27,8 @@ function pca_run_sync_cycle(): array
     // 商品API側の出演者IDが異なっていても対象女優へ必ず紐付けて保存する。
     $normal = pca_direct_sync_product_batch(10, 10);
 
-    // しろうと女性はvideocを100作品ずつ取得する。
-    $amateur = pca_sync_amateur_floor_batch(100);
+    // 女優APIで登録されていない人物だけに紐付く作品は不要なので、段階的に整理する。
+    $prunedItems = pca_prune_unregistered_actress_items(500);
 
     // 以前の pca_repair_item_actress_relations_batch() は既存関係を一度全削除して
     // raw_jsonだけから再構築していたため、女優ID指定検索で補完した正しい関係まで消していた。
@@ -46,7 +46,7 @@ function pca_run_sync_cycle(): array
         . '通常女優 ' . (int)($normal['processed_actresses'] ?? 0) . '人の商品確認'
         . '（API ' . (int)($normal['api_count'] ?? 0) . '件 / 保存 ' . (int)($normal['saved_items'] ?? 0) . '件 / 新規 ' . (int)($normal['new_items'] ?? 0) . '件 / 同名既存関係 ' . (int)($normal['copied_relations'] ?? 0) . '件補完 / 商品カード対象 '
         . (int)($normal['coverage_before'] ?? 0) . '人→' . (int)($normal['coverage_after'] ?? 0) . '人） / '
-        . 'しろうと作品 ' . (int)($amateur['api_count'] ?? 0) . '件取得（登録しろうと女性 ' . (int)($amateur['amateur_count'] ?? 0) . '人）';
+        . '登録女優に紐付かない既存作品 ' . $prunedItems . '件整理';
 
     site_setting_set_many([
         'pca_sync_last_run_at' => date('Y-m-d H:i:s'),
@@ -59,11 +59,11 @@ function pca_run_sync_cycle(): array
         'images_updated' => (int)($images['updated'] ?? 0),
         'normal_items' => (int)($normal['api_count'] ?? 0),
         'normal_actresses_processed' => (int)($normal['processed_actresses'] ?? 0),
-        'synced_items' => (int)($normal['api_count'] ?? 0) + (int)($amateur['api_count'] ?? 0),
-        'new_items' => (int)($normal['new_items'] ?? 0) + (int)($amateur['new_count'] ?? 0),
+        'synced_items' => (int)($normal['api_count'] ?? 0),
+        'new_items' => (int)($normal['new_items'] ?? 0),
         'total_items' => $totalItems,
         'linked_actresses' => (int)($normal['coverage_after'] ?? 0),
-        'amateur_count' => (int)($amateur['amateur_count'] ?? 0),
+        'pruned_items' => $prunedItems,
         'copied_relations' => (int)($normal['copied_relations'] ?? 0),
         'message' => $message,
     ];
