@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/app.php';
 require_once __DIR__ . '/dmm_normalizer.php';
 require_once __DIR__ . '/actress_product_coverage.php';
+require_once __DIR__ . '/indexnow.php';
 
 /**
  * 商品API側の出演者IDと女優API側のDMM女優IDが異なる既存データを、
@@ -96,6 +97,7 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
     $pdo = db();
     $newCount = 0;
     $savedCount = 0;
+    $changedItemIds = [];
 
     $upsert = $pdo->prepare(
         'INSERT INTO items(content_id,product_id,item_source,title,service_code,service_name,floor_code,floor_name,category_name,volume,review_count,review_average,url,affiliate_url,image_list,image_small,image_large,sample_movie_url_476,sample_movie_url_560,sample_movie_url_644,sample_movie_url_720,sample_movie_pc_flag,sample_movie_sp_flag,price_min_text,list_price_text,release_date,raw_json,updated_at)
@@ -182,12 +184,16 @@ function pca_direct_sync_actress_products(int $actressId, string $dmmId, string 
             // 女優ID指定検索そのものを根拠に、対象女優との関係を必ず保存する。
             $insertRelation->execute([':item_id' => $itemId, ':dmm_id' => $dmmId, ':name' => $actressName]);
 
+            $changedItemIds[$itemId] = true;
             $savedCount++;
             if (!$wasExisting) {
                 $newCount++;
             }
         }
         $pdo->commit();
+        foreach (array_keys($changedItemIds) as $changedItemId) {
+            pcf_indexnow_item_changed((int)$changedItemId);
+        }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
