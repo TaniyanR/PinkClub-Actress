@@ -8,7 +8,7 @@ $title = 'サイト設定';
 $message = null;
 $error = null;
 $recommendedTagline = 'FANZAの新作・人気AVを、サンプル動画・画像を見ながらジャンルやメーカーから手軽に探せる作品情報サイトです。';
-$recommendedKeywords = 'PinkClub-FL,FANZA,新作AV,人気AV,アダルト動画,AV作品,サンプル動画,サンプル画像,女優,ジャンル,メーカー,シリーズ';
+$recommendedKeywords = 'PinkClub-Actress,FANZA,AV女優,女優プロフィール,出演作品,新作AV,人気AV,アダルト動画,サンプル動画,サンプル画像';
 
 $normalizePinkClubName = static function (string $value): string {
     $value = trim($value);
