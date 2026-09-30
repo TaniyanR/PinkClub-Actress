@@ -2,5 +2,7 @@
 
 declare(strict_types=1);
 
-$pcaDirectoryAmateur = true;
-require __DIR__ . '/actress_directory_page.php';
+require_once __DIR__ . '/../lib/bootstrap.php';
+
+header('Location: ' . public_url('actresses.php'), true, 301);
+exit;
