@@ -207,6 +207,10 @@ function items_product_source_where(string $alias = ''): string
 
     $where[] = items_front_release_where($outerPrefix);
 
+    // PinkClub-Actressでは女優APIに登録済みの通常女優と紐付く作品だけ公開対象にする。
+    // 商品API由来の name: 合成IDだけの作品や、未登録人物だけの作品は公開しない。
+    $where[] = 'EXISTS (SELECT 1 FROM item_actresses pca_ia INNER JOIN actresses pca_a ON pca_a.dmm_id = pca_ia.dmm_id WHERE pca_ia.item_id = ' . $outerPrefix . '.id AND pca_a.dmm_id REGEXP "^[0-9]+$")';
+
     if (items_table_exists('rss_items') && items_table_exists('rss_sources') && items_column_exists('source_type', 'rss_sources')) {
         $where[] = 'NOT EXISTS (SELECT 1 FROM rss_items ri INNER JOIN rss_sources rs ON rs.id = ri.source_id WHERE rs.source_type = "partner_link" AND (ri.title = ' . $outerPrefix . '.title OR ri.url = ' . $outerPrefix . '.url OR ri.url = ' . $outerPrefix . '.affiliate_url))';
     }
