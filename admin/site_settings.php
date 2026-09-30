@@ -7,7 +7,7 @@ auth_require_admin();
 $title = 'サイト設定';
 $message = null;
 $error = null;
-$recommendedTagline = 'FANZAの新作・人気AVを、サンプル動画・画像を見ながらジャンルやメーカーから手軽に探せる作品情報サイトです。';
+$recommendedTagline = 'FANZA女優を写真やプロフィールから探し、登録女優の出演作品・サンプル動画・サンプル画像を確認できる女優専門サイトです。';
 $recommendedKeywords = 'PinkClub-Actress,FANZA,AV女優,女優プロフィール,出演作品,新作AV,人気AV,アダルト動画,サンプル動画,サンプル画像';
 
 $normalizePinkClubName = static function (string $value): string {
