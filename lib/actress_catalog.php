@@ -31,18 +31,7 @@ function pca_is_synthetic_amateur_id(string $dmmId): bool
 
 function pca_identity_is_amateur(string $dmmId, string $name): bool
 {
-    $dmmId = trim($dmmId);
-    try {
-        if (pca_is_synthetic_amateur_id($dmmId)) {
-            $stmt = db()->prepare("SELECT 1 FROM item_actresses ia INNER JOIN items i ON i.id=ia.item_id WHERE ia.dmm_id=:dmm_id AND " . pca_amateur_item_sql('i') . " LIMIT 1");
-            $stmt->execute([':dmm_id' => $dmmId]);
-            return (bool)$stmt->fetchColumn();
-        }
-        return false;
-    } catch (Throwable $e) {
-        error_log('actress identity classify failed: ' . $e->getMessage());
-        return false;
-    }
+    return false;
 }
 
 function pca_normalized_person_name(string $name): string
@@ -89,43 +78,34 @@ function pca_dedupe_normal_actress_rows(array $rows): array
 
 function pca_fetch_actresses(bool $amateur, int $limit = 10000, int $offset = 0, bool $withImagesOnly = false): array
 {
+    if ($amateur) {
+        return [];
+    }
+
     $limit = max(1, min(10000, $limit));
     $offset = max(0, $offset);
     $imageWhere = $withImagesOnly ? ' AND ' . pca_actress_has_image_sql('a') : '';
 
     try {
-        if (!$amateur) {
-            // 商品有無は各女優ごとに別SQLを投げず、1回のSELECT内で判定する。
-            $sql = "SELECT a.*,
-                           CASE WHEN EXISTS (
-                               SELECT 1 FROM item_actresses ia_p
-                               INNER JOIN items i_p ON i_p.id=ia_p.item_id
-                               WHERE ia_p.dmm_id=a.dmm_id AND i_p.floor_code='videoa'
-                           ) THEN 1 ELSE 0 END AS _has_product
-                    FROM actresses a
-                    WHERE TRIM(COALESCE(a.name,''))<>''
-                      AND a.dmm_id REGEXP '^[0-9]+$'
-                      {$imageWhere}
-                    ORDER BY a.name ASC,a.id ASC
-                    LIMIT 10000";
-            $stmt = db()->query($sql);
-            $rows = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-            $rows = pca_dedupe_normal_actress_rows($rows);
-            return array_slice($rows, $offset, $limit);
-        }
-
-        $sql = "SELECT DISTINCT a.*
+        $sql = "SELECT a.*,
+                       CASE WHEN EXISTS (
+                           SELECT 1
+                           FROM item_actresses ia_p
+                           INNER JOIN items i_p ON i_p.id=ia_p.item_id
+                           WHERE ia_p.dmm_id=a.dmm_id
+                             AND i_p.floor_code='videoa'
+                             AND i_p.item_source='fanza_product'
+                       ) THEN 1 ELSE 0 END AS _has_product
                 FROM actresses a
-                INNER JOIN item_actresses ia ON ia.dmm_id=a.dmm_id
-                INNER JOIN items i ON i.id=ia.item_id
                 WHERE TRIM(COALESCE(a.name,''))<>''
-                  AND a.dmm_id LIKE 'name:%'
-                  AND " . pca_amateur_item_sql('i') . "
+                  AND a.dmm_id REGEXP '^[0-9]+$'
                   {$imageWhere}
                 ORDER BY a.name ASC,a.id ASC
-                LIMIT {$limit} OFFSET {$offset}";
+                LIMIT 10000";
         $stmt = db()->query($sql);
-        return $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $rows = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $rows = pca_dedupe_normal_actress_rows($rows);
+        return array_slice($rows, $offset, $limit);
     } catch (Throwable $e) {
         error_log('actress catalogue fetch failed: ' . $e->getMessage());
         return [];
@@ -162,22 +142,18 @@ function pca_home_page(int $page, int $perPage = 120): array
 {
     $page = max(1, $page);
     $perPage = max(1, min(120, $perPage));
-    $normalRows = pca_fetch_actresses(false, 10000, 0, false);
-    $amateurRows = pca_fetch_actresses(true, 10000, 0, false);
-    $rowsByIdentity = [];
-    foreach (array_merge($normalRows, $amateurRows) as $row) {
-        if (!is_array($row)) continue;
-        $id = (int)($row['id'] ?? 0);
-        $dmm = trim((string)($row['dmm_id'] ?? ''));
-        if ($id <= 0) continue;
-        $key = $dmm !== '' ? 'dmm:' . $dmm : 'id:' . $id;
-        $rowsByIdentity[$key] = $row;
-    }
-    $rows = pca_seeded_shuffle(array_values($rowsByIdentity), (int)sprintf('%u', crc32(gmdate('Y-m-d') . ':pinkclub-actress')));
+    $rows = pca_fetch_actresses(false, 10000, 0, false);
+    $rows = pca_seeded_shuffle($rows, (int)sprintf('%u', crc32(gmdate('Y-m-d') . ':pinkclub-actress')));
     $total = count($rows);
     $pages = max(1, (int)ceil($total / $perPage));
     $page = min($page, $pages);
-    return ['rows' => array_slice($rows, ($page - 1) * $perPage, $perPage), 'page' => $page, 'pages' => $pages, 'total' => $total];
+
+    return [
+        'rows' => array_slice($rows, ($page - 1) * $perPage, $perPage),
+        'page' => $page,
+        'pages' => $pages,
+        'total' => $total,
+    ];
 }
 
 function pca_name_bucket(string $name, string $ruby = ''): string
