@@ -89,6 +89,26 @@ body.admin-page .admin-notice p{margin:0}
 body.admin-page .flash.success,body.admin-page .admin-notice--success{background:#edfaef;border-color:#74c278}
 body.admin-page .flash.error,body.admin-page .admin-notice--error{background:#fdf0f0;border-color:#d63638}
 body.admin-page .admin-menu__badge{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;font-size:11px;font-weight:700;color:#2d1a00;background:#ffdb8a;border:1px solid #ffbe46}
+body.admin-page .admin-search-settings{overflow-wrap:anywhere}
+body.admin-page .admin-search-settings>h1:first-child,
+body.admin-page .admin-search-settings>h2:first-child{padding-left:11px;border-left:4px solid #d63384;line-height:1.3}
+body.admin-page .admin-search-settings .admin-status-grid{margin:16px 0;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr))}
+body.admin-page .admin-search-settings .admin-status-card{min-width:0;background:#fff;border:1px solid #dfe4e8;border-radius:9px;padding:14px;box-shadow:0 2px 8px rgba(29,35,39,.045)}
+body.admin-page .admin-search-settings .admin-status-card:nth-child(1){border-top:3px solid #2271b1}
+body.admin-page .admin-search-settings .admin-status-card:nth-child(2){border-top:3px solid #d63384}
+body.admin-page .admin-search-settings .admin-status-card:nth-child(3){border-top:3px solid #2e8540}
+body.admin-page .admin-search-settings .admin-search-origin{font-size:14px;line-height:1.6}
+body.admin-page .admin-search-settings .admin-form-note{line-height:1.8}
+body.admin-page .admin-search-settings form>label.admin-search-confirm{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:7px;background:#f8fafc}
+body.admin-page .admin-search-settings form>label.admin-search-confirm>input{width:18px;height:18px;max-width:none;flex:0 0 18px;margin:2px 0 0;padding:0}
+body.admin-page .admin-search-settings input{box-sizing:border-box;min-width:0}
+body.admin-page .admin-search-settings .admin-actions{gap:10px;margin-top:12px}
+body.admin-page .admin-search-settings button{max-width:100%;white-space:normal;line-height:1.5}
+body.admin-page .admin-search-settings .admin-search-section{margin-top:24px;padding-top:20px;border-top:1px solid var(--admin-border)}
+body.admin-page .admin-search-settings .admin-search-table-wrap{overflow-x:auto}
+body.admin-page .admin-search-settings .admin-table{display:table;min-width:560px;table-layout:fixed}
+body.admin-page .admin-search-settings .admin-table th:first-child{width:70px}
+body.admin-page .admin-search-settings .admin-table th:last-child{width:150px}
 @media (max-width: 768px){
   body.admin-page{min-width:0}
   body.admin-page .admin-topbar{justify-content:flex-start;gap:0;padding:0}
@@ -104,6 +124,7 @@ body.admin-page .admin-menu__badge{display:inline-block;margin-left:8px;padding:
   body.admin-page .admin-main{margin-left:0;padding:12px;overflow-x:auto}
   body.admin-page input,body.admin-page select,body.admin-page textarea{box-sizing:border-box;max-width:100%}
   body.admin-page .admin-table{display:block;overflow-x:auto}
+  body.admin-page .admin-search-settings .admin-actions>button{width:100%}
 }
 
 /* Shared public/login/setup styles */
@@ -536,6 +557,82 @@ body.admin-page .admin-menu__child .admin-menu__link{padding-left:28px;font-weig
 .rail-row--tall-cards .rail-card .thumb{height:340px;object-fit:cover}
 .rail-row--tall-cards .rail-card .rail-card__noimage{height:340px !important}
 .rail-row--tall-cards.rail-row--wide-thumb .rail-card .thumb{aspect-ratio:auto;height:340px;object-fit:cover}
+
+/* PinkClub-FL: fixed 4 x 8 product grid without horizontal scrolling */
+.pinkclub-fl-product-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:18px;
+  width:100%;
+  overflow:visible;
+  align-items:start;
+}
+.pinkclub-fl-product-grid .rail-card{
+  display:flex;
+  width:100% !important;
+  min-width:0 !important;
+  max-width:none !important;
+  height:auto;
+  padding:12px !important;
+  border:1px solid #d9d9d9 !important;
+  border-radius:6px;
+  background:#fff;
+  box-sizing:border-box;
+}
+.pinkclub-fl-product-grid .rail-card > a:first-child{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:170px;
+  overflow:hidden;
+  background:#fff;
+}
+.pinkclub-fl-product-grid .rail-card .thumb,
+.pinkclub-fl-product-grid .rail-card .rail-card__noimage{
+  display:block;
+  width:100% !important;
+  min-width:0 !important;
+  max-width:100% !important;
+  height:170px !important;
+  object-fit:contain;
+  object-position:center;
+  background:#fff;
+}
+.pinkclub-fl-product-grid .rail-card__title{
+  min-height:calc(1.5em * 3);
+  max-height:calc(1.5em * 3);
+  line-height:1.5;
+  -webkit-line-clamp:3;
+}
+.pinkclub-fl-product-grid .sample-buttons{margin-top:0}
+@media (max-width:900px){
+  .pinkclub-fl-product-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .pinkclub-fl-product-grid .rail-card > a:first-child,
+  .pinkclub-fl-product-grid .rail-card .thumb,
+  .pinkclub-fl-product-grid .rail-card .rail-card__noimage{height:150px !important}
+}
+@media (max-width:480px){
+  .pinkclub-fl-product-grid{
+    grid-template-columns:1fr;
+    gap:24px;
+  }
+  .pinkclub-fl-product-grid .rail-card{
+    width:100% !important;
+    max-width:none !important;
+    padding:16px !important;
+  }
+  .pinkclub-fl-product-grid .rail-card > a:first-child{
+    height:auto;
+  }
+  .pinkclub-fl-product-grid .rail-card .thumb{
+    height:auto !important;
+    aspect-ratio:auto;
+  }
+  .pinkclub-fl-product-grid .rail-card .rail-card__noimage{
+    height:210px !important;
+  }
+}
 .rail-card__title{
   width:100%;
   max-width:100%;
