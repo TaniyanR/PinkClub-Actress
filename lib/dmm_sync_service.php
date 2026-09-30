@@ -457,12 +457,50 @@ class DmmSyncService
 
     private function rebuildItemRelations(int $itemId, array $item): void
     {
+        // 女優ID指定APIで補完した「登録済み女優との関係」は、通常フロア更新で消さない。
+        // 商品API側の出演者ID表現が女優APIと異なるケースでも、個別ページの商品カードを維持する。
+        $preservedActresses = [];
+        $preserveStmt = $this->pdo->prepare(
+            "SELECT ia.dmm_id, ia.actress_name
+             FROM item_actresses ia
+             INNER JOIN actresses a ON a.dmm_id = ia.dmm_id
+             WHERE ia.item_id = ?
+               AND a.dmm_id REGEXP '^[0-9]+$'"
+        );
+        $preserveStmt->execute([$itemId]);
+        foreach ($preserveStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $dmmId = trim((string)($row['dmm_id'] ?? ''));
+            $name = trim((string)($row['actress_name'] ?? ''));
+            if ($dmmId !== '' && $name !== '') {
+                $preservedActresses[$dmmId] = $name;
+            }
+        }
+
         $tables = ['item_actresses', 'item_genres', 'item_campaigns', 'item_labels', 'item_directors', 'item_makers', 'item_series', 'item_authors', 'item_actors'];
         foreach ($tables as $table) {
             $this->pdo->prepare("DELETE FROM {$table} WHERE item_id = ?")->execute([$itemId]);
         }
 
         $this->insertRelation($itemId, 'item_actresses', 'actress_name', $item['actresses']);
+
+        $restoreActress = $this->pdo->prepare(
+            'INSERT INTO item_actresses(item_id,dmm_id,actress_name)
+             SELECT :item_id,:dmm_id,:name
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM item_actresses
+                 WHERE item_id=:check_item_id AND dmm_id=:check_dmm_id
+             )'
+        );
+        foreach ($preservedActresses as $dmmId => $name) {
+            $restoreActress->execute([
+                ':item_id' => $itemId,
+                ':dmm_id' => $dmmId,
+                ':name' => $name,
+                ':check_item_id' => $itemId,
+                ':check_dmm_id' => $dmmId,
+            ]);
+        }
+
         $this->insertRelation($itemId, 'item_genres', 'genre_name', $item['genres']);
         $this->insertRelation($itemId, 'item_campaigns', 'campaign_name', $item['campaigns']);
         $this->insertRelation($itemId, 'item_labels', 'label_name', $item['labels']);
